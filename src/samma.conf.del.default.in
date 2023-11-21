@@ -1,0 +1,16 @@
+CommandPort=17777
+CommandPass=secret
+SyslogFacility=local1
+ListenIP=127.0.0.1
+ListenPort=20026
+RcptDB=btree:@sysconfdir@/rcpt.db
+SendmailCommand=@SENDMAIL@ -i
+MailsaveTmpDir=/tmp
+StrCode=SJIS
+TmpDir=/tmp
+WhitelistPath=@sysconfdir@/whitelist
+AttachmentFileAlias=UnknownFileName
+DeleteListName=DeletedFiles.%Y%m%d.txt
+DefaultDeletePolicy=no
+LoopCheck=no
+AttachDeleteList=yes

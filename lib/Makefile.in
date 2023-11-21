@@ -1,0 +1,23 @@
+export HAVE_CONFIGH="-D HAVE_CONFIGH"
+export HAVE_STRNDUP="-D HAVE_STRNDUP"
+
+all:
+	for LIBNAME in @LIBDGCONFIG@ @LIBDGSTR@ @LIBDGMAIL@ @LIBDGNETUTIL@; do \
+	  cd $$LIBNAME ; \
+	  make ; \
+	  cd .. ; \
+	done;
+
+clean:
+	for LIBNAME in @LIBDGCONFIG@ @LIBDGSTR@ @LIBDGMAIL@ @LIBDGNETUTIL@; do \
+	  cd $$LIBNAME ; \
+	  make clean ; \
+	  cd .. ; \
+	done;
+
+install:
+	for LIBNAME in @LIBDGCONFIG@ @LIBDGSTR@ @LIBDGMAIL@ @LIBDGNETUTIL@; do \
+	  cd $$LIBNAME ; \
+	  make install ; \
+	  cd .. ; \
+	done;

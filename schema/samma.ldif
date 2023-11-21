@@ -1,0 +1,21 @@
+dn: cn=samma,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: samma
+olcAttributeTypes: {0}( 1.3.6.1.4.1.15774.1.10.1.2.5 NAME 'mailEncryptionAddr'
+  DESC 'mail encryption address' EQUALITY octetStringMatch SYNTAX 1.3.6.1.4.1.
+ 1466.115.121.1.40{256} )
+olcAttributeTypes: {1}( 1.3.6.1.4.1.15774.1.10.1.2.6 NAME 'mailEncryptionPassw
+ ord' DESC 'mail encryption password' EQUALITY octetStringMatch SYNTAX 1.3.6.1
+ .4.1.1466.115.121.1.40{256} )
+olcAttributeTypes: {2}( 1.3.6.1.4.1.15774.1.10.1.2.7 NAME 'autoBccConditionStr
+ ing' DESC 'auto bcc condition string' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1
+ .4.1.1466.115.121.1.15 )
+olcAttributeTypes: {3}( 1.3.6.1.4.1.15774.1.10.1.2.8 NAME 'autoBccMailAddress'
+  DESC 'auto bcc mail address' EQUALITY caseIgnoreIA5Match SYNTAX 1.3.6.1.4.1.
+ 1466.115.121.1.26{256} )
+olcObjectClasses: {0}( 1.3.6.1.4.1.15774.1.10.1.1.11 NAME 'samma' DESC 'samma 
+ encryption user' SUP top STRUCTURAL MUST mailEncryptionAddr MAY mailEncryptio
+ nPassword )
+olcObjectClasses: {1}( 1.3.6.1.4.1.15774.1.10.1.1.12 NAME 'sammaAutoBccOption'
+  DESC 'samma auto bcc option' SUP top AUXILIARY MUST ( autoBccConditionString
+  $ autoBccMailAddress ) )

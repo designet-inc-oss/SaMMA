@@ -1,0 +1,42 @@
+
+                 SaMMA (SAfety Mail gateway with Milter Api)
+                              Version 1.0
+
+
+What is SaMMA
+-------------
+  SaMMA is a software that automatically converts the attached file(s)
+  of an e-mail into encrypted ZIP format in cooperation with MTA via
+  MILTER interface.
+
+
+Requirements
+------------
+  The following softwares are required. 
+
+  * Sendmail (8.10 or later) or Postfix (2.3 or later)
+  * libmilter (included to Sendmail)
+  * GMime
+  * BerkeleyDB
+  * zip
+  * iconv
+
+
+Installation
+------------
+  see the file INSTALL.
+
+
+Download
+--------
+  https://github.com/designet-inc-oss/SaMMA
+
+
+Homepage
+--------
+  https://www.designet.co.jp/open_source/samma
+
+
+Bug reports to
+--------------
+  https://github.com/designet-inc-oss/SaMMA/issues

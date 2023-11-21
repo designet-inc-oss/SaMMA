@@ -1,0 +1,185 @@
+SaMMA Installation Instructions
+-------------------------------
+
+Contentes
+---------
+  Quick Install
+  Requirements
+  Installation Procedure
+  Make Database
+  MTA Setting
+  
+  
+Quick Install
+-------------
+  $ autoheader
+  $ libtoolize
+  $ aclocal
+  $ automake --add-missing --copy
+  $ autoconf
+  $ ./configure
+  $ make
+  # make install
+
+
+Requirements
+------------
+  The following softwares are required. 
+
+  * Sendmail (8.10 or later) or Postfix (2.3 or later)
+  * libmilter (included to Sendmail)
+  * GMime (2.6)
+  * BerkeleyDB
+  * zip (command)
+  * iconv
+
+  Optional: to use os_uploader, following software is required
+  * Python-2.7
+    with modules:
+    * requests
+    * chardet
+    * urllib
+    * xml.etree.ElementTree
+
+
+Installation Procedure
+----------------------
+1. Configuration
+
+  $ autoheader
+  $ libtoolize
+  $ aclocal
+  $ automake --add-missing --copy
+  $ autoconf
+  $ ./configure
+	You can customize the build and installation process by supplying
+	one or more of the following command line options to "configure":
+
+	[general install options]
+	--prefix=PREFIX
+		install architecture-independent files in PREFIX.
+		The default is "/usr/local".
+
+	--bindir=DIRECTORY
+		Specifies the directory for executable programs. 
+		"PREFIX/bin" by default
+
+	--sysconfdir=DIRECTORY
+		The directory for various configuration files,
+		"PREFIX/etc" by default.
+
+	[helper program options]
+	--with-zip=PATH
+		PATH is location to zip command.
+		Searches for the $PATH directory if omitted.
+
+	--with-sendmail=PATH
+		PATH is location to sendmail command.
+		Searches for the $PATH directory and "/usr/sbin" directory if omitted.
+
+	[libraries options]
+	--with-dgconfig=DIRECTORY
+	--with-dgstr=DIRECTORY
+	--with-dgmail=DIRECTORY
+	--with-dgnetutil=DIRECTORY
+	--with-pthread=DIRECTORY
+	--with-iconv=DIRECTORY
+	--with-milter=DIRECTORY
+	--with-bdb=DIRECTORY
+	--with-glib=DIRECTORY
+	--with-gmime=DIRECTORY
+		Specifies prefix directory to search for libraries and 
+		header files.
+		Searches for DIRECTORY if specified.
+		
+
+2. Build
+
+  $ make
+
+
+3. Install
+
+  $ su
+  # make install
+
+
+Edit Policy File
+----------------
+
+  1. Sender Policy Settings
+
+        Attached file(s) of an e-mail sent from e-mail address
+        written "sender" file is encrypted.
+
+        *** Format ***
+        mailaddress@domain
+        domain
+
+        Example
+  # vi /usr/local/etc/samma/sender
+-------------------------------------------------------------------------
+senderaddr@senderdomain
+test.senderdomain
+-------------------------------------------------------------------------
+
+  2. Recipient Policy Settings
+
+        Attached file(s) of an e-mail sent to e-mail address
+        written "rcpt" file is encrypted.
+        The password of each e-mail address can be set.
+
+        *** Format ***
+        mailaddress@domain [password]
+        domain [password]
+
+  # vi /usr/local/etc/samma/rcpt
+-------------------------------------------------------------------------
+recipientaddr1@recipientdomain password
+recipientaddr2@recipientdomain secret
+recipientaddr3@recipientdomain
+test1.recipientdomain password1
+test2.recipientdomain password2
+test3.recipientdomain
+-------------------------------------------------------------------------
+
+
+Make DB File
+------------
+  
+  $ makemap -e {hash|btree} POLICYFILE < DBFILE
+  
+  Example.
+  $ makemap -e hash /usr/local/etc/samma/rcpt.db < /usr/local/etc/samma/rcpt
+  $ makemap -e hash /usr/local/etc/samma/sender.db < /usr/local/etc/samma/sender
+
+
+Configure MTA Settings
+----------------------
+  
+
+
+A. Example Settings For Sendmail
+
+  # vi /etc/mail/sendmail.mc
+-------------------------------------------------------------------------
+INPUT_MAIL_FILTER('samma', 'S=inet:20026@127.0.0.1, T=S:10m;R:10m;E:10m')
+-------------------------------------------------------------------------
+
+  # cd /etc/mail
+  # make
+
+
+B. Example Settings For Postfix
+
+  # vi /etc/postfix/main.cf
+----------------------------------
+smtpd_milters=inet:127.0.0.1:20026
+milter_default_action=tempfail
+milter_connect_timeout = 30s
+milter_content_timeout = 300s
+----------------------------------
+
+  # /etc/init.d/postfix restart
+
+

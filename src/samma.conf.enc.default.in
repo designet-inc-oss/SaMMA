@@ -1,0 +1,22 @@
+CommandPort=17777
+CommandPass=secret
+SyslogFacility=local1
+ListenIP=127.0.0.1
+ListenPort=20026
+EncryptionTmpDir=/tmp
+ZipCommand=@ZIP@
+SenderDB=btree:@sysconfdir@/sender.db
+RcptDB=btree:@sysconfdir@/rcpt.db
+TemplatePath=@sysconfdir@/samma.tmpl
+#RcptTemplatePath=@sysconfdir@/samma-rcpt.tmpl
+ErrorMessageTemplatePath=@sysconfdir@/errmsg.tmpl
+SendmailCommand=@SENDMAIL@ -i
+ZipfileName=AttachFile.%Y%m%d.zip
+MailsaveTmpDir=/tmp
+PasswordLength=8
+StrCode=SJIS
+DefaultEncryption=no
+UserPolicy=no
+AllowCharEnvelopeFrom=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`~!@#$%^&*()_+-={}|[]:";'<>?,./\
+AlternativePartEncrypt=no
+PasswordNoticeSetSender=0

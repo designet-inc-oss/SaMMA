@@ -1,0 +1,19 @@
+TO: <@@TOADDR@@>
+Subject: [Password] <@@SUBJECT@@>
+
+
+*************************************************************
+弊社より先にお送りした添付ファイルを暗号化したメールのパス
+ワードをお知らせ致します。
+下記のパスワードにて暗号を解除し閲覧して頂きますよう、お願い
+申し上げます。
+You were sent earlier an email with an encrypted file.
+This mail contains the password for the file.
+*************************************************************
+[メッセージ(Message)]
+送信日時(Date): <@@DATE@@>
+題名(Subjuect): <@@SUBJECT@@>
+
+[パスワード(Password)]
+<@@PASSWORD@@>
+

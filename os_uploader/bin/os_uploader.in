@@ -1,0 +1,1188 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+import sys
+import os
+import re
+import datetime
+import requests
+import xml.etree.ElementTree as ET
+import urllib
+
+#
+# global constant definision
+#
+CONFIG_FILE = '_sysconfdir_/os_uploader.conf'
+HDR_APIREQ = {
+    'OCS-APIRequest': 'true',
+}
+URL_USERSEARCH = '/ocs/v2.php/cloud/users'
+URL_CHKDIR = '/remote.php/dav/files/{}/{}/'
+URL_GETUSER = '/ocs/v2.php/cloud/users/{}'
+URL_MK_UDIR = '/remote.php/dav/files/{}/{}/'
+URL_MK_ZDIR = '/remote.php/dav/files/{}/{}/{}/'
+URL_GETSHARE_ST = '/ocs/v2.php/apps/files_sharing/api/v1/shares'
+URL_GETFILE_ST =  '/remote.php/dav/{}'
+URL_PUTFILE = '/remote.php/dav/{}'
+URL_NEWSHARE = '/ocs/v2.php/apps/files_sharing/api/v1/shares'
+URL_PARAM_DIRSHARE = '?path={}&shareType=0&permissions=9&shareWith={}'
+URL_PARAM_NEWSHARE = '?path={}&shareType=3&password={}&publicUpload=false'
+ULDIR = '{:04}{:02}{:02}{:02}{:02}{:02}_{}'
+RESP_DAV = {'d': 'DAV:', 's': 'http://sabredav.org/ns'}
+SHAREPATH = '/{}/{}/'
+ERRCODE_SYS = 2
+ERRCODE_USER = 1
+ERRCODE_ZERO = 0
+TAG_URL = '<@@URL@@>'
+TAG_FILES = '<@@FILENAME@@>'
+FNAME_UNKNOWN='Unknown_file_{}{}'
+
+#
+# functions
+#
+
+"""
+ read_conf(conf):
+  read configuration file
+
+ Parameters
+ ----------
+ conf : str
+     Path to configuration file
+
+ Return value
+ ------------
+ config_list : dict
+     dictionary of configurations
+ err_msg : str
+     error message
+"""
+def read_conf(conf):
+
+    # read configuration file
+    try:
+        f = open(conf, 'r')
+    except:
+        err_msg = 'error: Cannot open configuration file : ' + conf
+        return err_msg
+
+    try:
+        lines = f.readlines()
+    except:
+        err_msg = 'error: Cannot read configuration file : ' + conf
+        f.close
+        return err_msg
+
+    f.close
+
+    # initialize dict
+    config_list = { 'NC_URL': '',
+                    'NC_ADMIN': '',
+                    'NC_ADMINPW': '',
+                    'NC_TIMEOUT': 30,
+                    'HTTPS_CERT': False,
+                    'CONCURRENT': 5,
+                    'TEMPLATE_FILE': '_sysconfdir_/os_uploader.tmpl',
+                    'FORCE_HTTPS': False,
+                    'DEBUG': False,
+                    'STR_CODE': 'CP932'}
+
+    # define error message template
+    err_tmpl = "error: Bad configuration format at line {} ({})."
+
+    line_num = 0
+    for line in lines:
+        line_num += 1
+        # skip comment and blank line
+        if line[0] != '#' and line[0] != '\n':
+            l_arr = re.search(r"(^[^=]+)=(.*$)\n", line)
+            if l_arr:
+                # split key and value
+                key = l_arr.group(1)
+                value = l_arr.group(2)
+
+                # chech keys and values
+                if key == 'NC_URL':
+                    # case NC_URL
+                    url_ptn = 'https?://[\w/:%#\$&\?\(\)~\.=\+\-]+'
+                    if not re.match(url_ptn, value):
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+
+                elif key == 'NC_ADMIN':
+                    # case NC_ADMIN
+                    if value == '':
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+
+                elif key == 'NC_ADMINPW':
+                    # case NC_ADMINPW
+                    if value == '':
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+
+                elif key == 'NC_TIMEOUT':
+                    # case NC_TIMEOUT
+                    if value.isdecimal() is False or int(value) < 1:
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+                    value = int(value)
+
+                elif key == 'CONCURRENT':
+                    # case CONCURRENT
+                    if value.isdecimal() is False or int(value) < 1:
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+                    value = int(value)
+
+                elif key == 'HTTPS_CERT':
+                    # case HTTPS_CERT
+                    # check boolean
+                    if value.lower() == 'false':
+                        value = False
+                    elif value.lower() == 'true':
+                        value = True
+
+                    # path check
+                    else:
+                        if not re.match('^/.+', value):
+                            # not a full-path format
+                            err_msg = err_tmpl.format(line_num, key)
+                            return err_msg
+
+                elif key == 'TEMPLATE_FILE':
+                    # case TEMPLATE_FILE
+                    if not re.match('^/.+', value):
+                        # not a full-path format
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+
+                elif key == 'FORCE_HTTPS':
+                    # case FORCE_HTTPS
+                    #  This option is workaround for NextCloud specification
+                    #  that the effect of the 'overwrite.cli.url' setting
+                    #  do not affect to protocol e.g. http:// -> https://
+                    # check boolean
+                    if value.lower() == 'false':
+                        value = False
+                    elif value.lower() == 'true':
+                        value = True
+
+                elif key == 'DEBUG':
+                    # case DEBUG
+                    # check boolean
+                    if value.lower() == 'false':
+                        value = False
+                    elif value.lower() == 'true':
+                        value = True
+
+                elif key == 'STR_CODE':
+                    # case STR_CODE
+                    if value == '':
+                        err_msg = err_tmpl.format(line_num, key)
+                        return err_msg
+
+                else:
+                    # not a config element
+                    err_msg = err_tmpl.format(line_num, key)
+                    return err_msg
+
+                # case no error, store config dict
+                config_list[key] = value
+
+            else:
+                # '=' not found
+                err_msg = err_tmpl.format(line_num, "no '=' found")
+                return err_msg
+
+    # check empty set
+    for kn in config_list.keys():
+        if config_list[kn] == '':
+            err_msg = err_tmpl.format('--', 'no ' + kn + ' found')
+            return err_msg
+
+    # check HTTPS_CERT
+    if type(config_list['HTTPS_CERT']) is str:
+        if not os.path.isdir(config_list['HTTPS_CERT']):
+            err_msg = 'error: HTTPS_CERT=' + config_list['HTTPS_CERT'] + \
+                        ' is not a directory'
+            return err_msg
+
+    # check TEMPLATE_FILE
+    if not os.path.isfile(config_list['TEMPLATE_FILE']):
+        err_msg = 'error: TEMPLATE_FILE=' + config_list['TEMPLATE_FILE'] + \
+                    ' is not a file'
+        return err_msg
+
+    return config_list
+# END OF read_conf()
+
+
+"""
+ check_args(argv):
+  Check args format
+
+ Parameters
+ ----------
+ argv : list
+     arg values list
+
+ Return value
+ ------------
+ arg_list : dict
+     Success
+ err_msg : str
+     error message
+"""
+def check_args(argv):
+
+    # initialize arg_list
+    arg_list = {
+        'output': '',
+        'dir': ''
+    }
+
+    # check number of args
+    if len(argv) < 4:
+        err_msg = 'error: too few args'
+        return err_msg
+    if len(argv) > 4:
+        err_msg = 'error: too much args'
+        return err_msg
+
+    # check format
+    err_fmt = 'error: arg {} is invalid ({})'
+    # argv[1] : '-q'
+    if len(argv[1]) < 1 or argv[1] != '-q':
+        err_msg = err_fmt.format(1, argv[1])
+        return err_msg
+
+    # argv[2] : output file
+    if len(argv[2]) < 1:
+        err_msg = err_fmt.format(2, argv[2])
+        return err_msg
+    arg_list['output'] = argv[2]
+
+    # argv[3] : directory
+    if len(argv[3]) < 1:
+        err_msg = err_fmt.format(3, argv[3])
+        return err_msg
+
+    if not os.path.isdir(argv[3]):
+        err_msg = 'error: arg 3 is not a directory (' + argv[3] + ')'
+        return err_msg
+    arg_list['dir'] = argv[3]
+
+    return arg_list
+# END OF check_args()
+
+
+"""
+ check_env(myenv):
+  check environment values
+
+ Parameters
+ ----------
+ myenv : dict
+     environment values
+
+ Return value
+ ------------
+ env_list : dict
+     values from environments
+ err_msg : str
+     error message
+ False : bool
+     SAMMA_ENVFROM is empty
+"""
+def check_env(myenv):
+
+    # initialize return dict
+    env_list = {
+        'password': '',
+        'envfrom': ''
+    }
+
+    #
+    # check ZIPOPT
+    #
+    if not 'ZIPOPT' in myenv:
+        err_msg = 'error: no ZIPOPT environment value is set'
+        return err_msg
+    zipopt = myenv['ZIPOPT'].split()
+
+    # check number of elements
+    if len(zipopt) < 2:
+        err_msg = 'error: invalid ZIPOPT format'
+        return err_msg
+
+    # element 1: '-rP'
+    if zipopt[0] != '-rP':
+        err_msg = 'error: invalid ZIPOPT format'
+        return err_msg
+
+    # set password
+    env_list['password'] = zipopt[1]
+
+    #
+    # check SAMMA_ENVFROM
+    #
+    if not 'SAMMA_ENVFROM' in myenv:
+        err_msg = 'error: no SAMMA_ENVFROM environment value is set'
+        return err_msg
+
+    # check length
+    if len(myenv['SAMMA_ENVFROM']) == 0:
+        # no envfrom address: exit quietly
+        return False
+
+    # set envfrom
+    env_list['envfrom'] = myenv['SAMMA_ENVFROM']
+
+    return env_list
+# END OF check_env()
+
+"""
+ check_user(conf, vals):
+  check if user is exist on NextCloud
+
+ Params
+ ------
+ conf : dict
+     configs
+ vals : dict
+     values from args and environments
+
+ Return value
+ ------------
+ user_list : list
+        the user exists on NextCloud
+ False : bool
+        the user does not exist on NextCloud
+ err_msg : str
+     error message
+"""
+def check_user(conf, vals):
+
+    # setup URL and parameters
+    url = conf['NC_URL'] + URL_USERSEARCH
+    params = (
+        ('search', vals['envfrom']),
+    )
+    auth = (conf['NC_ADMIN'], conf['NC_ADMINPW'])
+
+    # do search
+    try:
+        response = requests.get(url, \
+                                headers=HDR_APIREQ, \
+                                params=params, \
+                                auth=auth, \
+                                timeout=conf['NC_TIMEOUT'], \
+                                verify=conf['HTTPS_CERT'])
+    except:
+        # error status
+        err_msg = 'error: Cannot connect to NextCloud ' + url
+        return err_msg
+
+    if response.status_code != 200:
+        # error status
+        err_msg = 'error: Cannot get user info from NextCloud ' + url
+        return err_msg
+
+    # analyze response XML
+    user = []
+    try:
+        root = ET.fromstring(response.text.encode('utf-8'))
+    except:
+        # error status
+        err_msg = 'error: Cannot get user info from NextCloud ' + url
+        return err_msg
+    for child in root:
+        if child.tag == 'data':
+            for gchild in child:
+                if gchild.tag == 'users':
+                    for ggchild in gchild:
+                        if ggchild.tag == 'element':
+                            user.append(ggchild.text)
+                    break
+            break
+    if len(user) == 0:
+        # user not found
+        return False
+
+    # check mailaddress for each user
+    matched_user = False
+    for chk_user in user:
+        url = conf['NC_URL'] + URL_GETUSER.format(chk_user)
+        try:
+            resp2 = requests.get(url, \
+                                headers=HDR_APIREQ, \
+                                auth=auth, \
+                                timeout=conf['NC_TIMEOUT'], \
+                                verify=conf['HTTPS_CERT'])
+        except:
+            # error status
+            err_msg = 'error: Cannot connect to NextCloud ' + url
+            return err_msg
+
+        if resp2.status_code != 200:
+            # error status
+            err_msg = 'error: Cannot get user info from NextCloud ' + url
+            return err_msg
+
+        # analyze XML
+        try:
+            root2 = ET.fromstring(resp2.text.encode('utf-8'))
+        except:
+            # error status
+            err_msg = 'error: Cannot get user info from NextCloud ' + url
+            return err_msg
+        for child in root2:
+            if child.tag == 'data':
+                for gchild in child:
+                    if gchild.tag == 'email':
+                        if gchild.text == vals['envfrom']:
+                            # email-addr matched
+                            matched_user = chk_user
+                        break
+                break
+        if matched_user is not False:
+            return [matched_user]
+
+    # case no matched users
+    return False
+# END OF check_user()
+
+"""
+ make_folder(conf, dir_url):
+  make folder on NextCloud
+
+ Params
+ ------
+ conf : dict
+     configs
+ dir_url : url
+     directory url to be made
+
+ Return value
+ ------------
+ True : bool
+     success
+ False : bool
+     already exists
+ err_msg : str
+     error message
+"""
+def make_folder(conf, dir_url):
+
+    url = conf['NC_URL'] + dir_url
+    auth = (conf['NC_ADMIN'], conf['NC_ADMINPW'])
+
+    # do mkdir
+    try:
+        response = requests.request('MKCOL', \
+                                url, \
+                                headers=HDR_APIREQ, \
+                                auth=auth, \
+                                timeout=conf['NC_TIMEOUT'], \
+                                verify=conf['HTTPS_CERT'])
+    except:
+        # error status
+        err_msg = 'Cannot connect to NextCloud'
+        return err_msg
+
+    if response.status_code != 201:
+        # check whether it already exists or not
+        ns = RESP_DAV
+        try:
+            root = ET.fromstring(response.text.encode('utf-8'))
+        except:
+            # error status
+            err_msg = 'Cannot make directory to NextCloud: ' + url
+            return err_msg
+        nodes = root.findall('s:message', ns)
+        if len(nodes) < 1:
+            # http eror
+            err_msg = 'HTTP error (' + response.status_code + ')'
+            return err_msg
+        if not re.match('r"already exists"', nodes[0].text):
+            # some error
+            err_msg = nodes[0].text
+            return err_msg
+        else:
+            # directory already exists
+            return False
+
+    # response code is 201: success
+    return True
+# END OF make_folder()
+
+
+"""
+ setup_folder()
+  setup user's folder
+
+ Params
+ ------
+ conf : dict
+     configs
+ vals : dict
+     values from args and environments
+
+ Return value
+ ------------
+ True : bool
+     the user folder exists or made on NextCloud
+ err_msg : str
+     error message
+"""
+def setup_folder(conf, vals):
+
+    #
+    # check if the folder exists
+    #
+    # setup URL and parameters
+    url = conf['NC_URL'] + URL_CHKDIR.format(conf['NC_ADMIN'], vals['envfrom'])
+    auth = (conf['NC_ADMIN'], conf['NC_ADMINPW'])
+
+    # do check
+    try:
+        response = requests.request('PROPFIND', \
+                                url, \
+                                headers=HDR_APIREQ, \
+                                auth=auth, \
+                                timeout=conf['NC_TIMEOUT'], \
+                                verify=conf['HTTPS_CERT'])
+    except:
+        # error status
+        err_msg = 'error: Cannot connect to NextCloud ' + url
+        return err_msg
+
+    # check response
+    if response.status_code == 404:
+        # case directory not found
+        ns = RESP_DAV
+        try:
+            root = ET.fromstring(response.text.encode('utf-8'))
+        except:
+            # error status
+            err_msg = 'error: Cannot get user\'s directory info: ' + url
+            return err_msg
+        nodes = root.findall('s:exception', ns)
+        if len(nodes) == 0:
+            # not from NextCloud response
+            err_msg = 'error: Cannot search user\'s directory'
+            return err_msg
+        else:
+            # no user folder fond. make new folder.
+            udir = URL_MK_UDIR.format(conf['NC_ADMIN'], vals['envfrom'])
+            ret = make_folder(conf, udir)
+            if type(ret) is str:
+                err_msg = 'error: Cannot make user\'s directory: ' \
+                            + udir + ': ' + ret
+                return err_msg
+            
+    elif response.status_code != 207:
+        # http error
+        err_msg = 'error: Cannot search user\'s directory'
+        return err_msg
+
+    #
+    # check if the folder is shared
+    #
+    path = '/' + vals['envfrom']
+    if response.status_code == 207:
+        # check status XML
+        url = conf['NC_URL'] + URL_GETSHARE_ST
+        params = (
+            ('path', path),
+        )
+        # do check
+        try:
+            resp2 = requests.get( url, \
+                                    headers=HDR_APIREQ, \
+                                    auth=auth, \
+                                    params=params, \
+                                    timeout=conf['NC_TIMEOUT'], \
+                                    verify=conf['HTTPS_CERT'])
+        except:
+            # error status
+            err_msg = 'error: Cannot connect to NextCloud ' + url
+            return err_msg
+        if resp2.status_code != 200:
+            # error status
+            err_msg = 'error: Cannot get user info from NextCloud ' + url
+            return err_msg
+        chk_path = False
+        chk_user = False
+        try:
+            root2 = ET.fromstring(resp2.text.encode('utf-8'))
+        except:
+            # error status
+            err_msg = 'error: Cannot get user info from NextCloud ' + url
+            return err_msg
+        for child in root2:
+            if child.tag == 'data':
+                for gchild in child:
+                    if gchild.tag == 'element':
+                        for ggchild in gchild:
+                            if ggchild.tag == 'path':
+                                if ggchild.text == path:
+                                    chk_path = True
+                            if ggchild.tag == 'share_with':
+                                if ggchild.text == vals['user']:
+                                    chk_user = True
+                        break
+                break
+        if chk_path is True and chk_user is True:
+            # it is share with him
+            return True
+
+    #
+    # case not shared: share with the user
+    #
+    encpath = urllib.parse.quote(path)
+    encuser = urllib.parse.quote(vals['user'])
+    url = conf['NC_URL'] + URL_NEWSHARE \
+            + URL_PARAM_DIRSHARE.format(encpath, encuser)
+    try:
+        resp3 = requests.post( url, \
+                                headers=HDR_APIREQ, \
+                                auth=auth, \
+                                timeout=conf['NC_TIMEOUT'], \
+                                verify=conf['HTTPS_CERT'])
+    except:
+        # error status
+        err_msg = 'error: Cannot connect to NextCloud ' + url
+        return err_msg
+    if resp3.status_code != 200:
+        # error status
+        err_msg = 'error: Cannot get user info from NextCloud ' + url
+        return err_msg
+    try:
+        root3 = ET.fromstring(resp3.text.encode('utf-8'))
+    except:
+        # error status
+        err_msg = 'error: Cannot get user info from NextCloud ' + url
+        return err_msg
+    for child in root3:
+        if child.tag == 'meta':
+            for gchild in child:
+                if gchild.tag == 'statuscode':
+                    if gchild.text == '200':
+                        # success
+                        return True
+                    if gchild.text == '403':
+                        # already shared with: ignore
+                        return True
+            break
+
+    # case error
+    err_msg = 'error: Cannot share with user directory NextCloud ' + url
+    return err_msg
+# END OF setup_folder()
+
+
+"""
+ put_file()
+  upload file
+
+ Params
+ ------
+ conf : dict
+     configs
+ src : str
+     source file
+ dst : str
+     destination url
+
+ Return value
+ ------------
+ True : bool
+     success
+ False : bool
+     upload failed because of filename prohibition
+ err_msg : str
+     error message
+"""
+def put_file(conf, src, dst, count):
+
+    # setup URL
+    url = conf['NC_URL'] + dst
+    auth = (conf['NC_ADMIN'], conf['NC_ADMINPW'])
+
+    # setup file
+    try:
+        file = open(src, 'rb')
+    except:
+        # error status
+        err_msg = 'error: Cannot open upload source file'
+        return err_msg
+
+    try:
+        response = requests.put(url, \
+                                headers=HDR_APIREQ, \
+                                auth=auth, \
+                                verify=conf['HTTPS_CERT'], \
+                                timeout=conf['NC_TIMEOUT'], \
+                                data=file)
+    except:
+        # error status
+        err_msg = 'error: Cannot connect to NextCloud ' + url
+        return err_msg
+
+    file.close
+
+    if response.status_code == 400:
+        if count != 0:
+            err_msg = 'HTTP error (' + response.status_code + ')'
+            return err_msg
+        # upload failed because of filename prohibition
+        return False
+
+    if response.status_code != 201:
+        # error status
+        ns = RESP_DAV
+        try:
+            root = ET.fromstring(response.text.encode('utf-8'))
+        except:
+            # http eror
+            err_msg = 'Cannot put file: ' + url
+            return err_msg
+        nodes = root.findall('s:message', ns)
+        if len(nodes) < 1:
+            # http eror
+            err_msg = 'HTTP error (' + response.status_code + ')'
+            return err_msg
+        if not re.match('r"already exists"', nodes[0].text):
+            # some error
+            err_msg = nodes[0].text
+            return err_msg
+
+    # Success
+    return True
+# END OF put_file()
+
+"""
+ upload_files_child()
+  child main process to upload a file
+
+ Params
+ ------
+ conf : dict
+     configs
+ src : str
+     source file
+ dfile : str
+     destination filename
+ ukf : str
+     original file name
+ zdir : str
+     upload file dir
+
+ Return value
+ ------------
+ file_list : list
+     success
+ err_msg : str
+     error message
+"""
+def upload_files_child(conf, src, dfile, ukf, zdir):
+    ndfile = dfile
+    dst = zdir + urllib.parse.quote(ndfile)
+    ret = put_file(conf, src, dst, 0)
+    if type(ret) is str:
+        # failed to upload
+        err_msg = 'error: Cannot upload file ' + ndfile + ' : ' + ret
+        return err_msg
+    if ret is False:
+        # try again with UNKNOWN file
+        ndfile = ukf
+        dst = zdir + urllib.parse.quote(ndfile)
+        ret = put_file(conf, src, dst, 1)
+        if type(ret) is str:
+            # failed to upload
+            err_msg = 'error: Cannot upload file ' + ndfile + ' : ' + ret
+            return err_msg
+    return [ndfile]
+# END OF upload_files_child()
+
+"""
+ upload_files()
+  make upload folder and upload files
+
+ Params
+ ------
+ conf : dict
+     configs
+ vals : dict
+     values from args and environments
+
+ Return value
+ ------------
+ file_list : list
+     success
+ err_msg : str
+     error message
+"""
+def upload_files(conf, vals):
+
+    # setup dir name
+    nt = datetime.datetime.now()
+    mypid = os.getpid()
+    dir_name = ULDIR.format(nt.year, nt.month, nt.day, \
+                            nt.hour, nt.minute, nt.second, \
+                            mypid)
+    zdir = URL_MK_ZDIR.format(conf['NC_ADMIN'], vals['envfrom'], dir_name)
+
+    # setup upload directory
+    ret = make_folder(conf, zdir)
+    if type(ret) is str:
+        # error
+        err_msg = 'error: Cannot make upload directory ' + zdir + ': ' + ret
+        return err_msg
+    if ret is False:
+        # case already exists
+        err_msg = 'error: Cannot make upload directory ' + zdir \
+                    + ': directory already exists'
+        return err_msg
+
+    # get files in vals['dir']
+    file_list = {'dir_name': dir_name, 'files': []}
+    files = os.listdir(vals['dir'])
+    files_num = len(files)
+    ukc = 0
+    scount = 0
+    errors = []
+
+    # upload all files simultaneously consider to concurrency limit
+    #  deal index number directory because 'files' list is chopped to sub-list
+    while ukc < files_num:
+        plist = []
+
+        # determin end number
+        scount += conf['CONCURRENT']
+        if scount > files_num:
+            end_num = files_num
+        else:
+            end_num = scount
+
+        # loop less than conf['CONCURRENT']
+        while ukc < end_num:
+            file = files[ukc]
+            # make Unknown filename
+            f_arr = re.search(r"^(.+)(\.[^.]+)$", file)
+            if f_arr is None:
+                # got no suffix
+                ukf = FNAME_UNKNOWN.format(ukc, '')
+            elif len(f_arr.groups()) == 2:
+                # got suffix
+                ukf = FNAME_UNKNOWN.format(ukc, f_arr.group(2))
+            else:
+                # got no suffix
+                ukf = FNAME_UNKNOWN.format(ukc, '')
+            # translate STR_CODE to utf-8
+            try:
+                tt = os.fsencode(file)
+                dfile = tt.decode(conf['STR_CODE'])
+            except:
+                # failed to translate
+                dfile = ukf
+            src = vals['dir'] + '/' + file
+
+            # setup fork
+            rpipe, wpipe = os.pipe()
+            pid = os.fork()
+
+            if pid == 0:
+                #
+                # I am child
+                #
+                os.close(rpipe)
+                wpipe = os.fdopen(wpipe, 'w')
+                ret = upload_files_child(conf, src, dfile, ukf, zdir)
+                if type(ret) is str:
+                    # error status
+                    wpipe.write(str(ret))
+                    wpipe.close()
+                    exit(1)
+
+                # success
+                wpipe.write(str(ret[0]))
+                wpipe.close()
+                exit(0)
+                #
+                # all path of the child part would exit certainly
+                #
+
+            else:
+                #
+                # I am parent
+                #
+                os.close(wpipe)
+                rpipe = os.fdopen(rpipe, 'r')
+                plist.append({'rp': rpipe, 'pid': pid, 'sf': dfile})
+                ukc += 1
+
+        # wait pids
+        for proc in plist:
+            cpid = proc['pid']
+            rp = proc['rp']
+            sf = proc['sf']
+            status = os.waitpid(cpid, 0)
+
+            if os.WIFEXITED(status[1]) is not True:
+                # fatal error in child process
+                erros.append("Fatail error detected for upload file " + sf)
+        
+            elif os.WEXITSTATUS(status[1]) != 0:
+                # error detected in child process
+                err_msg_c = rp.readline()
+                errors.append(err_msg_c)
+
+            else:
+                # upload success
+                dfile = rp.readline()
+                file_list['files'].append(dfile)
+
+            rp.close()
+        del plist
+
+        if len(errors) > 0:
+            # error detected
+            err_msg = ''
+            for eline in errors:
+                err_msg += str(eline)
+                err_msg += "\n"
+            return err_msg
+
+    return file_list
+# END OF upload_files()
+
+
+"""
+ issue_url()
+  make new share link
+
+ Params
+ ------
+ conf : dict
+     configs
+ vals : dict
+     values from args and environments
+
+ Return value
+ ------------
+ file_list : list
+     success
+ err_msg : str
+     error message
+"""
+def issue_url(conf, vals):
+
+    ulpath = SHAREPATH.format(vals['envfrom'], vals['dir_name'])
+    encpw = urllib.parse.quote(vals['password'])
+    url = conf['NC_URL'] + URL_NEWSHARE \
+            + URL_PARAM_NEWSHARE.format(ulpath, encpw)
+    auth = (conf['NC_ADMIN'], conf['NC_ADMINPW'])
+
+    try:
+        response = requests.post(url, \
+                                headers=HDR_APIREQ, \
+                                auth=auth, \
+                                timeout=conf['NC_TIMEOUT'], \
+                                verify=conf['HTTPS_CERT'])
+    except:
+        # error status
+        err_msg = 'error: Cannot make shared link ' + url
+        return err_msg
+
+    if response.status_code != 200:
+        # error status
+        err_msg = 'error: Cannot make shared link ' + url
+        return err_msg
+
+    shared_url = False
+    rt = response.text
+    try:
+        root = ET.fromstring(rt.encode('utf-8'))
+    except:
+        # error status
+        err_msg = 'error: Cannot make shared link ' + url
+        return err_msg
+    for child in root:
+        if child.tag == 'data':
+            for gchild in child:
+                if gchild.tag == 'url':
+                    shared_url = [gchild.text]
+                    break
+            break
+    if shared_url is False:
+        # error status
+        err_msg = 'error: Cannot make shared link ' + url
+        return err_msg
+
+    return shared_url
+# END OF issue_url()
+
+
+"""
+ make_output()
+  make output file
+
+ Params
+ ------
+ conf : dict
+     configs
+ vals : dict
+     values from args and environments
+
+ Return value
+ ------------
+ True : bool
+     success
+ err_msg : str
+     error message
+"""
+def make_output(conf, vals):
+
+    # read template file
+    try:
+        f = open(conf['TEMPLATE_FILE'], 'r')
+        tmpl = f.read()
+        f.close()
+    except:
+        # file read error
+        err_msg = 'error: cannot read template file: ' + conf['TEMPLATE_FILE']
+        return err_msg
+
+    # setup files list
+    files = ''
+    for line in vals['files']:
+        files += line + "\n"
+
+    # replace tags
+    data = tmpl.replace(TAG_URL, vals['shared_url']).replace(TAG_FILES, files)
+
+    # write file
+    try:
+        fw = open(vals['output'], 'w')
+        fw.write(data)
+    except:
+        # file write error
+        err_msg = 'error: cannot write output file: ' + vals['output']
+        return err_msg
+    return True
+# END OF make_output()
+
+#
+# MAIN
+#
+
+"""
+main_proc()
+
+(avoid access to module scope values)
+"""
+def main_proc():
+
+    # check args
+    argv = sys.argv
+    arg_list = check_args(argv)
+    if type(arg_list) is str:
+        # args error
+        print(arg_list)
+        exit(ERRCODE_SYS)
+
+    # check environments
+    env = os.environ
+    env_list = check_env(env)
+    if type(env_list) is str:
+        # environments error
+        print(env_list)
+        exit(ERRCODE_SYS)
+    if env_list is False:
+        # SAMMA_ENVFROM is empty: exit quietly
+        try:
+            # make empty output file
+            fw = open(arg_list['output'], 'w')
+            fw.close()
+        except:
+            # file write error
+            err_msg = 'error: cannot write output file: ' + arg_list['output']
+            print(err_msg)
+            exit(ERRCODE_SYS)
+        exit(ERRCODE_ZERO)
+
+    # read config
+    config_list = read_conf(CONFIG_FILE)
+    if type(config_list) is str:
+        # args error
+        print(config_list)
+        exit(ERRCODE_SYS)
+
+    # merge values
+    vals_list = {}
+    for k in arg_list:
+        vals_list[k] = arg_list[k]
+    for k in env_list:
+        vals_list[k] = env_list[k]
+    del env_list
+    del arg_list
+
+    # stop stderr output from requests API
+    if config_list['DEBUG'] is False:
+        sys.stderr = None
+
+    # check if user exists on NextCloud
+    ret = check_user(config_list, vals_list)
+    if type(ret) is str:
+        # system error
+        print(ret)
+        exit(ERRCODE_SYS)
+    if ret is False:
+        # user does not exist
+        print('No such user: ' + vals_list['envfrom'])
+        exit(ERRCODE_USER)
+    vals_list['user'] = ret[0]
+
+    # setup sender's folder
+    ret = setup_folder(config_list, vals_list)
+    if type(ret) is str:
+        # system error
+        print(ret)
+        exit(ERRCODE_SYS)
+
+    # upload files
+    ul_files = upload_files(config_list, vals_list)
+    if type(ul_files) is str:
+        # system error
+        print(ul_files)
+        exit(ERRCODE_SYS)
+    vals_list['dir_name'] = ul_files['dir_name']
+    vals_list['files'] = ul_files['files']
+
+    # issue shared URL
+    issued_url = issue_url(config_list, vals_list)
+    if type(issued_url) is str:
+        # system error
+        print(issued_url)
+        exit(ERRCODE_SYS)
+    vals_list['shared_url'] = issued_url[0]
+    # XXX-NextCloud workaround FORCE_HTTPS
+    if config_list['FORCE_HTTPS'] is True:
+        # force replace shared_url from ^http:// to https://
+        vals_list['shared_url'] = re.sub('^http://', 'https://', issued_url[0])
+
+    # make output file
+    ret = make_output(config_list, vals_list)
+    if type(ret) is str:
+        # system error
+        print(ret)
+        exit(ERRCODE_SYS)
+
+    return True
+# END OF main_proc()
+
+main_proc()
+exit(ERRCODE_ZERO)

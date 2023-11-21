@@ -1,0 +1,22 @@
+prefix = @prefix@
+exec_prefix = @exec_prefix@
+bindir = @bindir@
+sysconfdir = @sysconfdir@
+_PY = @PYTHON3@
+
+all: bin/os_uploader etc/os_uploader.conf.default
+
+install: install-os_uploader install-conf
+
+install-os_uploader: bin/os_uploader
+	install -m 0755 bin/os_uploader $(exec_prefix)/bin
+
+install-conf: etc/os_uploader.conf.default etc/os_uploader.tmpl.default
+	install -m 0644 etc/os_uploader.conf.default $(sysconfdir)
+	install -m 0644 etc/os_uploader.tmpl.default $(sysconfdir)
+
+bin/os_uploader: bin/os_uploader.in
+	sed "s#_sysconfdir_#$(sysconfdir)#g" bin/os_uploader.in | sed "s#_python3_#$(_PY)#" > bin/os_uploader
+
+etc/os_uploader.conf.default: etc/os_uploader.conf.in
+	sed "s#_sysconfdir_#$(sysconfdir)#g" etc/os_uploader.conf.in > etc/os_uploader.conf.default

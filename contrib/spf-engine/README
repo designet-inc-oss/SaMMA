@@ -1,0 +1,92 @@
+Cloud Linkage Instructions
+**********************************
+This program is used to link with cloud services email.
+In the README, Example settings for Exchange Online.
+
+Contentes
+====================
+  Preparation
+  Setup policyd-spf
+  DNS Setting
+  Postfix Setting
+
+
+Preparation
+====================
+Set up forward emails from cloud service emails to SaMMA.
+For forwarding settings, check the procedure for each cloud service.
+
+Setup policyd-spf
+====================
+1. Install
+
+  # pip install spf-engine-[version].tar.gz
+
+2. Edit Conf File
+
+  # vi /etc/python-policyd-spf/policyd-spf.conf
+-------------------------------------------------------------------------
+debugLevel = 1
+TestOnly = 1
+
+Reason_Message = Access denied
+
+HELO_reject = No_Check
+#HELO_pass_restriction
+
+Mail_From_reject = Fail
+#Mail_From_pass_restriction
+
+PermError_reject = True
+TempError_Defer = True
+
+skip_addresses = 127.0.0.0/8,::ffff:127.0.0.0/104,::1
+
+Header_Type = None
+#Hide_Receiver = No
+Hide_Receiver = Yes
+Authserv_Id = HEADER
+fakeSender = dummy@spf.local
+-------------------------------------------------------------------------
+
+DNS Setting
+====================
+
+1. Set the SPF record of spf.local
+-------------------------------------------------------------------------
+spf.local. TXT "v=spf1 include:spf.protection.outlook.com -all"
+-------------------------------------------------------------------------
+
+If using Unbound as DNS resolver, Set as below.
+
+  # vi /etc/unbound/local.d/spf.conf
+-------------------------------------------------------------------------
+local-data: 'spf.local. TXT "v=spf1 include:spf.protection.outlook.com -all"'
+-------------------------------------------------------------------------
+
+2. Reflect
+
+If using Unbound as DNS resolver
+
+  # unbound-control reload
+
+Postfix Setting
+====================
+
+1. Setting master.cf
+
+  # vi /etc/postfix/master.cf
+-------------------------------------------------------------------------
+policyd-spf unix - n n - 0 spawn user=nobody argv=/usr/local/bin/policyd-spf
+-------------------------------------------------------------------------
+
+2. Setting main.cf
+
+  # vi /etc/postfix/main.cf
+-------------------------------------------------------------------------
+smtpd_client_restrictions = check_policy_service unix:private/policyd-spf, permit
+-------------------------------------------------------------------------
+
+3. Reflect
+
+  # systemctl restart postfix

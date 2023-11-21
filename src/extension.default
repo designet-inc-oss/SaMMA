@@ -1,0 +1,8 @@
+# Extention Policy Settings
+#
+# Specify the extension of the file name after encrypted ZIP conversion
+# for each destination
+#
+# *** Format ***
+# mailaddress@domain [extension]
+# domain [extension]

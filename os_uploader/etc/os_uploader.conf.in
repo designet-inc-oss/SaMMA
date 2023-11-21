@@ -1,0 +1,5 @@
+NC_URL=https://nextcloud.example.com/nextcloud/
+NC_ADMIN=admin
+NC_ADMINPW=adminadmin
+HTTPS_CERT=False
+TEMPLATE_FILE=_sysconfdir_/os_uploader.tmpl

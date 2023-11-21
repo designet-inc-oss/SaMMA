@@ -1,0 +1,8 @@
+# Sender Policy Settings
+#
+# Attached file(s) of an e-mail sent from e-mail address
+# written here is encrypted.
+#
+# *** Format ***
+# mailaddress@domain
+# domain

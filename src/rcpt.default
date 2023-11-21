@@ -1,0 +1,9 @@
+# Recipient Policy Settings
+#
+# Attached file(s) of an e-mail sent to e-mail address
+# written here is encrypted.
+# The password of each e-mail address can be set.
+#
+# *** Format ***
+# mailaddress@domain [password]
+# domain [password]

@@ -1,0 +1,291 @@
+/*
+ * samma
+ *
+ * Copyright (C) 2006,2007,2008,2011 DesigNET, INC.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ */
+
+/*
+ * $RCSfile: mailzip_config.h.in,v $
+ * $Revision: 1.20 $
+ * $Date: 2014/05/09 04:43:07 $
+ */
+
+#ifndef _MAILZIP_CONFIG_H_
+#define _MAILZIP_CONFIG_H_
+
+#include <db.h>
+
+#define CFG_NG -1
+
+#define DEFAULT_CONFFILE        "@sysconfdir@/samma.conf"
+
+#define DEFAULT_ALLOWCHAR "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`~!@#$%^&*()_+-={}|[]:\";'<>?,./\\"
+
+#define OFFSET(x, y)  ((size_t)&(((x *)NULL)->y))
+
+void select_cfentry(void);
+
+struct config {
+    int   cf_commandport;
+    char *cf_commandpass;
+    char *cf_syslogfacility;
+    char *cf_listenip;
+    int   cf_listenport;
+    char *cf_encryptiontmpdir;
+    char *cf_zipcommand;
+    char *cf_zipcommandopt;
+    char *cf_senderdb;
+    char *cf_rcptdb;
+    char *cf_extensiondb;
+    char *cf_templatepath;
+    char *cf_whitelistpath;         // ADD 20150316 whitelist path
+    char *cf_sendmailcommand;
+    char *cf_sendpasswordcommand;
+    char *cf_zipfilename;
+    char *cf_attachmentfilealias;   // ADD 20150323 unknown file
+    char *cf_mailsavetmpdir;
+    char *cf_senderdbpath;
+    char *cf_rcptdbpath;
+    char *cf_extensiondbpath;
+    DBTYPE cf_senderdbtype;
+    DBTYPE cf_rcptdbtype;
+    DBTYPE cf_extensiondbtype;
+    int  cf_passwordlength;
+    char *cf_strcode;
+    char *cf_defaultencryption;
+    char *cf_userdefaultencryption;
+    char *cf_defaultpassword;
+    char *cf_userpolicy;
+    char *cf_loopcheck;             // ADD 20150326 loopcheck
+    char * cf_ldapuri;
+    char * cf_ldapbasedn;
+    char * cf_ldapbinddn;
+    char * cf_ldapbindpassword;
+    char * cf_ldapfilter;
+    char * cf_fixedpassnotify;
+    char * cf_fixedpassnotifypass;
+    char * cf_autobccoption;
+    char * cf_defaultautobccconditionstring;
+    char * cf_defaultautobccmailaddr;
+    char * cf_references;
+    char * cf_tmpdir;
+    char * cf_deletelistname;
+    char * cf_defaultdeletepolicy;
+    char * cf_attachdeletelist;
+    int  cf_settimezone;     // Repairing The display of the date 2014/05/08 (Thu)
+    char *cf_defaultsendercheck;
+    void *cf_sendercheck;
+    void *cf_harmlessproc;
+    void *cf_harmlessconf;
+    void *cf_safetysenderharmlessconf;
+    void *cf_mimetypes;
+    int cf_maxmultipartdepth;
+    char *cf_harmlessmessageconvert;
+    char *cf_harmlessmessageencrypt;
+    char *cf_harmlessmessagedelete;
+    char *cf_harmlessmessagefilename;
+    int cf_harmlesscommandtimeout;
+    char *cf_allowcharenvelopefrom;
+    char *cf_errmsgtemplatepath;
+    char *cf_alternativepartencrypt;
+    int cf_passwordnoticesetsender;
+#ifdef __CUSTOMIZE2018
+    char *cf_useaddmessageheader;
+    char *cf_messagetmpljppath;
+    char *cf_messagetmplenpath;
+    char *cf_messagetmplbothpath;
+    char *cf_useencryptsubject;
+    char *cf_subjectencryptstringjp;
+    char *cf_subjectencryptstringen;
+    int   cff_subencmode;
+#endif	// __CUSTOMIZE2018
+#ifdef __NOTICE_PASSWD
+    int  cf_passwordnotice;
+    char *cf_rcpttemplatepath;
+#endif  // __NOTICE_PASSWD
+    char *cf_zipattachmentcontenttype;
+};
+
+#ifdef __CUSTOMIZE2018
+struct addmsg_tmpl {
+    char *amt_jp;
+    char *amt_en;
+    char *amt_both;
+    char *amt_jp_html;
+    char *amt_en_html;
+    char *amt_both_html;
+};
+#endif	// __CUSTOMIZE2018
+
+struct noticepass_tmpl {
+    char *sender_tmpl;
+#ifdef __NOTICE_PASSWD
+    char *rcpt_tmpl;
+#endif  // __NOTICE_PASSWD
+};
+
+#ifdef _MAILZIP_CONFIG_C_
+
+static char * is_dbpath(char *str);
+static char * is_passwd_length(int);
+static char * is_strcode(char *str);
+static char * is_notnull(char *str);
+static char * is_yesno(char *);
+static char * is_timezone(int);
+static int check_ldap_config(struct config *);
+static int check_autobcc_config(struct config *);
+char *is_executable_file(char *);
+#ifdef __NOTICE_PASSWD
+static char * is_passwordnotice(int);
+#endif  // __NOTICE_PASSWD
+
+struct dbset {
+    char *db_name;
+    int   db_len;
+    DBTYPE db_type;
+};
+
+#define HASH "hash:"
+#define BTREE "btree:"
+#define HASH_SIZE 5
+#define BTREE_SIZE 6
+
+struct str_code_set {
+    char *code_name;
+    int   code_len;
+};
+
+#define PASSMIN 	1
+#define PASSMAX 	20
+
+/* Repairing The display of the date 2014/05/08 (Thu) */
+#define TIMEZONEMIN     -2345
+#define TIMEZONEMAX     2345
+
+#define ERR_CONF_PASSLEN	"invalid password length"
+#define ERR_CONF_DBPATH		"invalid db path(%s)"
+#define ERR_CONF_TIMEZONE       "invalid timezone value"
+
+#define STR_YES       "yes"
+#define STR_NO        "no"
+
+#endif	/* _MAILZIP_CONFIG_C_ */
+
+
+/*
+ * reload_config()
+ *
+ * Reload configuration file
+ *
+ * Args:
+ *  char *file          Configuration file name
+ *
+ * Return value:
+ *  0                   Success
+ *  CFG_NG              System error
+ *  1                   Temporaly error (during reloading)
+ *  2                   Temporaly error (because of config file)
+ *  3                   Temporaly error (because of template file)
+ */
+int reload_config(char *file);
+
+/*
+ * reload_tmpl()
+ *
+ * Reload template file
+ *
+ * Args:
+ *  struct config *cfg  configure structure
+ *
+ * Return value:
+ *  0                   Success
+ *  CFG_NG              System error
+ *  1                   Temporaly error (during reloading)
+ *  2                   Temporaly error (because of config file)
+ */
+int reload_tmpl(struct config *);
+
+/*
+ * reload_whitelist()
+ *
+ * Reload whitelist file
+ *
+ * Args:
+ *  char *file          Configuration file name
+ *
+ * Return value:
+ *  0                   Success
+ *  CFG_NG              System error
+ *  1                   Temporaly error (during reloading)
+ *  2                   Temporaly error (because of config file)
+ */
+int reload_whitelist(char *);
+
+
+/*
+ * config_release()
+ *
+ * Countdown config reference counter.
+ *
+ * Args:
+ *  struct config *cfg          To release pointer.
+ *
+ * Return value:
+ *  (void)
+ */
+void config_release(struct config *cfg);
+
+/*
+ * config_init()
+ *
+ * Get current config structure pointer,
+ * and countup the reference counter.
+ *
+ * Args: (void)
+ *
+ * Return value:
+ *  struct config *             config structure pointer
+ */
+struct config * config_init();
+
+#ifdef __CUSTOMIZE2018
+/*
+ * reload_addmsg()
+ *
+ * Reload template file
+ *
+ * Args:
+ *  struct config *cfg	configure structure
+ *
+ * Return value:
+ *  0                   Success
+ *  CFG_NG              System error
+ *  1                   Temporaly error (during reloading)
+ *  2                   Temporaly error (because of config file)
+ */
+int reload_addmsg(struct config *);
+
+struct addmsg_tmpl * addmsg_init();
+void addmsg_release(struct addmsg_tmpl *);
+#endif	// __CUSTOMIZE2018
+
+struct noticepass_tmpl * tmpl_init();
+struct whitelist * whitelist_init();
+void tmpl_release(struct noticepass_tmpl *);
+void whitelist_release(struct whitelist *);
+
+#endif	/* _MAILZIP_CONFIG_H_ */

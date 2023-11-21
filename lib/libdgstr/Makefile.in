@@ -1,0 +1,26 @@
+LIBNAME=libdgstr
+CFLAGS=-g 
+DYNAMICLIB=$(LIBNAME).so
+STATICLIB=$(LIBNAME).a
+
+all:: $(DYNAMICLIB) $(STATICLIB)
+
+$(DYNAMICLIB): $(LIBNAME).c  $(LIBNAME).h 
+	cc $(CFLAGS) $(HAVE_CONFIGH) $(HAVE_STRNDUP) -shared -fPIC $(LIBNAME).c  -o $@
+
+$(STATICLIB): $(LIBNAME).o 
+	ar cr $@ $(LIBNAME).o 
+	ranlib $@
+
+$(LIBNAME).o: $(LIBNAME).c $(LIBNAME).h
+	cc $(CFLAGS) $(HAVE_CONFIGH) $(HAVE_STRNDUP) -c $(LIBNAME).c
+
+test:
+	cd ../test; make test
+
+clean:
+	rm -f $(DYNAMICLIB) $(STATICLIB) $(LIBNAME).o
+
+install:
+	install $(DYNAMICLIB) $(STATICLIB) @LIBDG_PREFIX@/lib
+	install $(LIBNAME).h @LIBDG_PREFIX@/include

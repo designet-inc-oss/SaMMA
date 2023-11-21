@@ -1,0 +1,40 @@
+###
+## SaMMA setting file sample for "harmless" mode
+#
+
+CommandPort=17777
+CommandPass=secret
+SyslogFacility=local1
+ListenIP=127.0.0.1
+ListenPort=20026
+EncryptionTmpDir=/tmp
+MailsaveTmpDir=/tmp
+ZipCommand=@ZIP@
+SendmailCommand=@SENDMAIL@ -i
+
+SenderDB=btree:@sysconfdir@/sender.db
+RcptDB=btree:@sysconfdir@/rcpt.db
+DefaultSenderCheck=no
+
+StrCode=SJIS
+PasswordLength=8
+#DefaultPassword=passDEFAULT
+LoopCheck=yes
+
+SenderCheck=check-spf, check-senderip, check-senderdomain
+
+HarmlessProc=convert,encrypt,delete
+MaxMultipartDepth=10
+
+HarmlessConf=/tmp/harmless.conf
+HarmlessCommandTimeout=60
+
+MimeTypeFile=/etc/mime.types
+
+HarmlessMessageConvert=Converted: mime-type=[<@@mime-before@@> -> <@@mime-after@@>], filename=[<@@file-before@@> -> <@@file-after@@>]
+HarmlessMessageEncrypt=Encrypt <@@filename@@>.
+HarmlessMessageDelete=Delete <@@mimetype@@>.
+
+AttachmentFileAlias=UnknownFile
+ZipfileName=AttachFile.%Y%m%d.zip
+HarmlessMessageFileName=samma-log.%Y%m%d.txt

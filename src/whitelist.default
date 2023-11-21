@@ -1,0 +1,7 @@
+# Whitelist Policy Settings
+#
+# Avoid encrypting attachments for emails that arrive from a 
+# #specific IP or network address
+#
+# *** Format ***
+# IPv4 (or v6)

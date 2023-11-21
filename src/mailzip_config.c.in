@@ -1,0 +1,2245 @@
+/*
+ * samma
+ *
+ * Copyright (C) 2006,2007,2008,2011 DesigNET, INC.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ */
+
+/*
+ * $RCSfile: mailzip_config.c.in,v $
+ * $Revision: 1.14 $
+ * $Date: 2014/05/09 04:43:07 $
+ */
+
+#include <stdio.h>
+#include <errno.h>
+#include <limits.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <sys/stat.h>
+#include <syslog.h>
+#include <pthread.h>
+#include <libdgconfig.h>
+#include <gmime/gmime.h>
+#include <ldap.h>
+#include <lber.h>
+
+#define _MAILZIP_CONFIG_C_
+#include "mailzip_config.h"
+
+#include "log.h"
+#include "mailzip_db.h"
+#include "samma_policy.h"
+#include "global.h"
+#include "mailzip_tmpl.h"
+#include "netlist.h"
+#include "msg_convert.h"
+#include "harmless.h"
+#include "sender_check.h"
+
+
+static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t config_ref_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t config_ref_old_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t config_reload_lock = PTHREAD_MUTEX_INITIALIZER;
+static int config_ref = 0;
+static int config_ref_old = 0;
+
+struct config *cur_cfg = NULL;
+struct config *new_cfg = NULL;
+struct config *old_cfg = NULL;
+
+static pthread_mutex_t tmpl_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t tmpl_ref_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t tmpl_ref_old_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t tmpl_reload_lock = PTHREAD_MUTEX_INITIALIZER;
+static int tmpl_ref = 0;
+static int tmpl_ref_old = 0;
+
+/* ADD(20150316)*/
+static pthread_mutex_t whitelist_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t whitelist_ref_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t whitelist_ref_old_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t whitelist_reload_lock = PTHREAD_MUTEX_INITIALIZER;
+static int whitelist_ref = 0;
+static int whitelist_ref_old = 0;
+
+#ifdef __CUSTOMIZE2018
+static pthread_mutex_t addmsg_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t addmsg_ref_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t addmsg_ref_old_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t addmsg_reload_lock = PTHREAD_MUTEX_INITIALIZER;
+static int addmsg_ref = 0;
+static int addmsg_ref_old = 0;
+#endif	// __CUSTOMIZE2018
+
+struct cfentry *cfe = NULL;
+
+/* Configuration terms for Encryption mode */
+struct cfentry cfe_enc[] = {
+    {
+        "CommandPort", CF_INT_PLUS, "17777",
+        OFFSET(struct config, cf_commandport), is_port
+    },
+    {
+        "CommandPass", CF_STRING, NULL,
+        OFFSET(struct config, cf_commandpass), is_notnull
+    },
+    {
+        "SyslogFacility", CF_STRING, "local1",
+        OFFSET(struct config, cf_syslogfacility), is_syslog_facility,
+    },
+    {
+        "ListenIP", CF_STRING, "127.0.0.1",
+        OFFSET(struct config, cf_listenip), is_ipaddr
+    },
+    {
+        "ListenPort", CF_INT_PLUS, "20026",
+        OFFSET(struct config, cf_listenport), is_port
+    },
+    {
+        "EncryptionTmpDir", CF_STRING, NULL,
+        OFFSET(struct config, cf_encryptiontmpdir), is_writable_directory
+    },
+    {
+        "ZipCommand", CF_STRING, NULL,
+        OFFSET(struct config, cf_zipcommand), is_executable_file
+    },
+    {
+        "ZipCommandOpt", CF_STRING, "--",
+        OFFSET(struct config, cf_zipcommandopt), NULL
+    },
+    {
+        "SenderDB", CF_STRING, "btree:@sysconfdir@/sender.db",
+        OFFSET(struct config, cf_senderdb), is_dbpath
+    },
+    {
+        "RcptDB", CF_STRING, "btree:@sysconfdir@/rcpt.db",
+        OFFSET(struct config, cf_rcptdb), is_dbpath
+    },
+    {
+        "TemplatePath", CF_STRING, "@sysconfdir@/samma.tmpl",
+        OFFSET(struct config, cf_templatepath), is_readable_file
+    },
+    {
+        "WhitelistPath", CF_STRING, "@sysconfdir@/whitelist",
+        OFFSET(struct config, cf_whitelistpath), NULL
+    },
+    {
+        "SendmailCommand", CF_STRING, NULL,
+        OFFSET(struct config, cf_sendmailcommand), is_notnull
+    },
+    {
+        "SendPasswordCommand", CF_STRING, "--",
+        OFFSET(struct config, cf_sendpasswordcommand), is_notnull
+    },
+    {
+        "ZipfileName", CF_STRING, NULL,
+        OFFSET(struct config, cf_zipfilename), is_notnull
+    },
+    {
+        "AttachmentFileAlias", CF_STRING, "UnknownFileName",
+        OFFSET(struct config, cf_attachmentfilealias), is_notnull
+    },
+    {
+        "MailsaveTmpDir", CF_STRING, NULL,
+        OFFSET(struct config, cf_mailsavetmpdir), is_writable_directory
+    },
+    {
+        "PasswordLength", CF_INT_PLUS, "8",
+        OFFSET(struct config, cf_passwordlength), is_passwd_length
+    },
+    {
+        "StrCode", CF_STRING, NULL,
+        OFFSET(struct config, cf_strcode), is_strcode
+    },
+    {
+        "DefaultEncryption", CF_STRING, NULL,
+        OFFSET(struct config, cf_defaultencryption), is_yesno
+    },
+    {
+        "UserDefaultEncryption", CF_STRING, "no",
+        OFFSET(struct config, cf_userdefaultencryption), is_yesno
+    },
+    {
+        "DefaultPassword", CF_STRING, "",
+        OFFSET(struct config, cf_defaultpassword), is_notnull
+    },
+    {
+        "UserPolicy", CF_STRING, NULL,
+        OFFSET(struct config, cf_userpolicy), is_yesno
+    },
+    {
+        "LoopCheck", CF_STRING, "no",
+        OFFSET(struct config, cf_loopcheck), is_yesno
+    },
+    {
+        "LDAPUri", CF_STRING, "",
+        OFFSET(struct config, cf_ldapuri), is_notnull
+    },
+    {
+        "LDAPBaseDN", CF_STRING, "",
+        OFFSET(struct config, cf_ldapbasedn), is_notnull
+    },
+    {
+        "LDAPBindDN", CF_STRING, "",
+        OFFSET(struct config, cf_ldapbinddn), is_notnull
+    },
+    {
+        "LDAPBindPassword", CF_STRING, "",
+        OFFSET(struct config, cf_ldapbindpassword), is_notnull
+    },
+    {
+        "LDAPFilter", CF_STRING, "",
+        OFFSET(struct config, cf_ldapfilter), is_notnull
+    },
+    {
+        "FixedPassNotify", CF_STRING, "no",
+        OFFSET(struct config, cf_fixedpassnotify), is_yesno
+    },
+    {
+        "FixedPassNotifyPass", CF_STRING, "[Default Password]",
+        OFFSET(struct config, cf_fixedpassnotifypass), is_notnull
+    },
+    {
+	"AutoBccOption", CF_STRING, "no",
+	OFFSET(struct config, cf_autobccoption), is_yesno
+    },
+    {
+	"DefaultAutoBccConditionString", CF_STRING, "",
+	OFFSET(struct config, cf_defaultautobccconditionstring), is_notnull
+    },
+    {
+	"DefaultAutoBccMailAddr", CF_STRING, "",
+	OFFSET(struct config, cf_defaultautobccmailaddr), is_notnull
+    },
+    {
+	"References", CF_STRING, "no",
+	OFFSET(struct config, cf_references), is_yesno
+    },
+    {
+        "SetTimeZone", CF_INTEGER, "0",
+        OFFSET(struct config, cf_settimezone), is_timezone
+    },
+    {
+        "AllowCharEnvelopeFrom", CF_STRING, DEFAULT_ALLOWCHAR,
+        OFFSET(struct config, cf_allowcharenvelopefrom), NULL
+    },
+    {
+        "ErrorMessageTemplatePath", CF_STRING, "@sysconfdir@/errmsg.tmpl",
+        OFFSET(struct config, cf_errmsgtemplatepath), is_readable_file
+    },
+    {
+        "AlternativePartEncrypt", CF_STRING, "no",
+        OFFSET(struct config, cf_alternativepartencrypt), is_yesno
+    },
+    {
+        "ExtensionDB", CF_STRING, "",
+        OFFSET(struct config, cf_extensiondb), is_dbpath
+    },
+    {
+        "PasswordNoticeSetSender", CF_INTEGER, "0",
+        OFFSET(struct config, cf_passwordnoticesetsender), is_boolean
+    },
+    {
+        "ZipAttachmentContentType", CF_STRING, "application/zip",
+        OFFSET(struct config, cf_zipattachmentcontenttype), NULL
+    },    
+#ifdef __CUSTOMIZE2018
+    {
+        "UseAddMessageHeader", CF_STRING, "no",
+        OFFSET(struct config, cf_useaddmessageheader), is_yesno
+    },
+    {
+        "MessageTmplJPPath", CF_STRING, "",
+        OFFSET(struct config, cf_messagetmpljppath), NULL
+    },
+    {
+        "MessageTmplENPath", CF_STRING, "",
+        OFFSET(struct config, cf_messagetmplenpath), NULL
+    },
+    {
+        "MessageTmplBothPath", CF_STRING, "",
+        OFFSET(struct config, cf_messagetmplbothpath), NULL
+    },
+    {
+        "UseEncryptSubject", CF_STRING, "no",
+        OFFSET(struct config, cf_useencryptsubject), is_yesno
+    },
+    {
+        "SubjectEncryptStringJP", CF_STRING, "",
+        OFFSET(struct config, cf_subjectencryptstringjp), NULL
+    },
+    {
+        "SubjectEncryptStringEN", CF_STRING, "",
+        OFFSET(struct config, cf_subjectencryptstringen), NULL
+    },
+#endif	// __CUSTOMIZE2018
+#ifdef __NOTICE_PASSWD
+    {
+        "PasswordNotice", CF_INTEGER, "0",
+        OFFSET(struct config, cf_passwordnotice), is_passwordnotice
+    },
+    {
+        "RcptTemplatePath", CF_STRING, "",
+        OFFSET(struct config, cf_rcpttemplatepath), is_readable_file
+    },    
+#endif	// __NOTICE_PASSWD
+
+};
+
+/* Configuration terms for Delete mode */
+struct cfentry cfe_del[] = {
+    {
+        "CommandPort", CF_INT_PLUS, "17777",
+        OFFSET(struct config, cf_commandport), is_port
+    },
+    {
+        "CommandPass", CF_STRING, NULL,
+        OFFSET(struct config, cf_commandpass), is_notnull
+    },
+    {
+        "SyslogFacility", CF_STRING, "local1",
+        OFFSET(struct config, cf_syslogfacility), is_syslog_facility,
+    },
+    {
+        "ListenIP", CF_STRING, "127.0.0.1",
+        OFFSET(struct config, cf_listenip), is_ipaddr
+    },
+    {
+        "ListenPort", CF_INT_PLUS, "20026",
+        OFFSET(struct config, cf_listenport), is_port
+    },
+    {
+        "RcptDB", CF_STRING, "btree:@sysconfdir@/rcpt.db",
+        OFFSET(struct config, cf_rcptdb), is_dbpath
+    },
+    {
+        "SendmailCommand", CF_STRING, NULL,
+        OFFSET(struct config, cf_sendmailcommand), is_notnull
+    },
+    {
+        "WhitelistPath", CF_STRING, "@sysconfdir@/whitelist",
+        OFFSET(struct config, cf_whitelistpath), NULL
+    },
+    {
+        "MailsaveTmpDir", CF_STRING, NULL,
+        OFFSET(struct config, cf_mailsavetmpdir), is_writable_directory
+    },
+    {
+        "LoopCheck", CF_STRING, "no",
+        OFFSET(struct config, cf_loopcheck), is_yesno
+    },
+    {
+        "StrCode", CF_STRING, NULL,
+        OFFSET(struct config, cf_strcode), is_strcode
+    },
+    {
+        "SetTimeZone", CF_INTEGER, "0",
+        OFFSET(struct config, cf_settimezone), is_timezone
+    },
+    {
+        "AttachmentFileAlias", CF_STRING, "UnknownFileName",
+        OFFSET(struct config, cf_attachmentfilealias), is_notnull
+    },
+    {
+        "TmpDir", CF_STRING, NULL,
+        OFFSET(struct config, cf_tmpdir), is_writable_directory
+    },
+    {
+        "DeleteListName", CF_STRING, NULL,
+        OFFSET(struct config, cf_deletelistname), is_notnull
+    },
+    {
+        "DefaultDeletePolicy", CF_STRING, NULL,
+        OFFSET(struct config, cf_defaultdeletepolicy), is_yesno
+    },
+    {
+        "AttachDeleteList", CF_STRING, "yes",
+        OFFSET(struct config, cf_attachdeletelist), is_yesno
+    }
+
+};
+
+/* Configuration terms for Encryption mode */
+struct cfentry cfe_harmless[] = {
+    {
+        "CommandPort", CF_INT_PLUS, "17777",
+        OFFSET(struct config, cf_commandport), is_port
+    },
+    {
+        "CommandPass", CF_STRING, NULL,
+        OFFSET(struct config, cf_commandpass), is_notnull
+    },
+    {
+        "SyslogFacility", CF_STRING, "local1",
+        OFFSET(struct config, cf_syslogfacility), is_syslog_facility,
+    },
+    {
+        "MailsaveTmpDir", CF_STRING, NULL,
+        OFFSET(struct config, cf_mailsavetmpdir), is_writable_directory
+    },
+    {
+        "ListenIP", CF_STRING, "127.0.0.1",
+        OFFSET(struct config, cf_listenip), is_ipaddr
+    },
+    {
+        "ListenPort", CF_INT_PLUS, "20026",
+        OFFSET(struct config, cf_listenport), is_port
+    },
+    {
+        "EncryptionTmpDir", CF_STRING, NULL,
+        OFFSET(struct config, cf_encryptiontmpdir), is_writable_directory
+    },
+    {
+        "ZipCommand", CF_STRING, NULL,
+        OFFSET(struct config, cf_zipcommand), is_readable_file
+    },
+    {
+        "ZipCommandOpt", CF_STRING, "--",
+        OFFSET(struct config, cf_zipcommandopt), NULL
+    },
+    {
+        "SenderDB", CF_STRING, "btree:@sysconfdir@/sender.db",
+        OFFSET(struct config, cf_senderdb), is_dbpath
+    },
+    {
+        "RcptDB", CF_STRING, "btree:@sysconfdir@/rcpt.db",
+        OFFSET(struct config, cf_rcptdb), is_dbpath
+    },
+    {
+        "WhitelistPath", CF_STRING, "@sysconfdir@/whitelist",
+        OFFSET(struct config, cf_whitelistpath), NULL
+    },
+    {
+        "SendmailCommand", CF_STRING, NULL,
+        OFFSET(struct config, cf_sendmailcommand), is_notnull
+    },
+    {
+        "SendPasswordCommand", CF_STRING, "--",
+        OFFSET(struct config, cf_sendpasswordcommand), is_notnull
+    },
+    {
+        "ZipfileName", CF_STRING, NULL,
+        OFFSET(struct config, cf_zipfilename), is_notnull
+    },
+    {
+        "AttachmentFileAlias", CF_STRING, "UnknownFileName",
+        OFFSET(struct config, cf_attachmentfilealias), is_notnull
+    },
+    {
+        "PasswordLength", CF_INT_PLUS, "8",
+        OFFSET(struct config, cf_passwordlength), is_passwd_length
+    },
+    {
+        "StrCode", CF_STRING, NULL,
+        OFFSET(struct config, cf_strcode), is_strcode
+    },
+    {
+        "DefaultPassword", CF_STRING, "",
+        OFFSET(struct config, cf_defaultpassword), is_notnull
+    },
+    {
+        "LoopCheck", CF_STRING, "no",
+        OFFSET(struct config, cf_loopcheck), is_yesno
+    },
+    {
+        "SetTimeZone", CF_INTEGER, "0",
+        OFFSET(struct config, cf_settimezone), is_timezone
+    },
+    {
+        "DefaultSenderCheck", CF_STRING, NULL,
+        OFFSET(struct config, cf_defaultsendercheck), is_yesno
+    },
+    {
+        "SenderCheck", CF_FUNCTION, NULL,
+        OFFSET(struct config, cf_sendercheck), set_sender_checker
+    },
+    {
+        "HarmlessProc", CF_FUNCTION, NULL,
+        OFFSET(struct config, cf_harmlessproc), set_harmless_proc_list
+    },
+    {
+        "HarmlessConf", CF_FUNCTION, NULL,
+        OFFSET(struct config, cf_harmlessconf), read_harmlessconf
+    },
+    {
+        "MimeTypeFile", CF_FUNCTION, "/etc/mime.types",
+        OFFSET(struct config, cf_mimetypes), read_mimetypes
+    },
+    {
+        "MaxMultipartDepth", CF_INTEGER, "10",
+        OFFSET(struct config, cf_maxmultipartdepth), is_port
+    },
+    {
+        "HarmlessMessageConvert", CF_STRING, "Converted: mime-type[<@@mime-before@@> -> <@@mime-after@@>], filename=[<@@file-before@@> -> <@@file-after@@>]",
+        OFFSET(struct config, cf_harmlessmessageconvert), NULL
+    },
+    {
+        "HarmlessMessageEncrypt", CF_STRING, "Encrypted <@@filename@@>.",
+        OFFSET(struct config, cf_harmlessmessageencrypt), NULL
+    },
+    {
+        "HarmlessMessageDelete", CF_STRING, "Deleted <@@mimetype@@>",
+        OFFSET(struct config, cf_harmlessmessagedelete), NULL
+    },
+    {
+        "HarmlessMessageFileName", CF_STRING, NULL,
+        OFFSET(struct config, cf_harmlessmessagefilename), NULL
+    },
+    {
+        "HarmlessCommandTimeout", CF_INT_PLUS, "60",
+        OFFSET(struct config, cf_harmlesscommandtimeout), NULL
+    },
+    {
+        "SafetySenderHarmlessConf", CF_FUNCTION, "",
+        OFFSET(struct config, cf_safetysenderharmlessconf), read_harmlessconf
+    },
+};
+
+
+#define NCONFIG_ENC (sizeof(cfe_enc) / sizeof(struct cfentry))
+#define NCONFIG_DEL (sizeof(cfe_del) / sizeof(struct cfentry))
+#define NCONFIG_HARMLESS (sizeof(cfe_harmless) / sizeof(struct cfentry))
+size_t nconfig = 0;
+
+/*
+ * select_cfentry()
+ *
+ * At the time of the initiation of the SaMMA program, 
+ * this function selects which set of the config entries to load
+ * for the specified run mode, that is, Encryption Mode and
+ * Delete Mode.
+ * 
+ * Args: (void)
+ *
+ * Return value: (void)
+ */
+void select_cfentry()
+{
+    if (ismode_delete) {
+        cfe = cfe_del;
+        nconfig = NCONFIG_DEL;
+    } else if (ismode_harmless) {
+        cfe = cfe_harmless;
+        nconfig = NCONFIG_HARMLESS;
+    } else {
+        cfe = cfe_enc;
+        nconfig = NCONFIG_ENC;
+    }
+
+    return;
+}
+
+struct dbset db_kind[] = {
+    {
+        HASH, HASH_SIZE, DB_HASH
+    },
+    {
+        BTREE, BTREE_SIZE, DB_BTREE
+    }
+};
+
+struct str_code_set str_code[] = {
+    {STR_UTF8, STR_UTF8_LEN},
+    {STR_JIS, STR_JIS_LEN},
+    {STR_EUC, STR_EUC_LEN},
+    {STR_SJIS, STR_SJIS_LEN},
+};
+
+#define STRCODENUM (sizeof(str_code) / sizeof(struct str_code_set))
+
+struct noticepass_tmpl *cur_tmpl = NULL;
+struct noticepass_tmpl *new_tmpl = NULL;
+struct noticepass_tmpl *old_tmpl = NULL;
+
+/* ADD(20150316) */
+/* struct of whitelist */
+struct whitelist *cur_whitelist = NULL;
+struct whitelist *new_whitelist = NULL;
+struct whitelist *old_whitelist = NULL;
+
+#ifdef __CUSTOMIZE2018
+struct addmsg_tmpl *cur_addmsg = NULL;
+struct addmsg_tmpl *new_addmsg = NULL;
+struct addmsg_tmpl *old_addmsg = NULL;
+#endif	// __CUSTOMIZE2018
+
+/*
+ * setup_config()
+ *
+ * Setup config structure.
+ *
+ * args: (void)
+ *
+ * Return value:
+ *  struct config *	Success
+ *  NULL		error
+ */
+static struct config *
+setup_config()
+{
+    struct config *cf = NULL;
+
+    // allocate memory
+    cf = (struct config *)malloc(sizeof(struct config));
+    if (cf == NULL) {
+	log(ERR_MEMORY_ALLOCATE, "setup_config", "cf", strerror(errno));
+	return NULL;
+    }
+
+    // set all members to NULL
+    memset(cf, 0, sizeof(struct config));
+    return cf;
+}
+
+static void
+free_config(struct config *cfg)
+{
+if (cfg == NULL) {
+return;
+}
+if (cfg->cf_syslogfacility != NULL) {
+free(cfg->cf_syslogfacility);
+}
+if (cfg->cf_listenip != NULL) {
+free(cfg->cf_listenip);
+}
+if (cfg->cf_encryptiontmpdir != NULL) {
+free(cfg->cf_encryptiontmpdir);
+}
+if (cfg->cf_zipcommand != NULL) {
+free(cfg->cf_zipcommand);
+}
+if (cfg->cf_zipcommandopt != NULL) {
+free(cfg->cf_zipcommandopt);
+}
+if (cfg->cf_senderdb != NULL) {
+free(cfg->cf_senderdb);
+}
+if (cfg->cf_rcptdb != NULL) {
+free(cfg->cf_rcptdb);
+}
+if (cfg->cf_templatepath != NULL) {
+free(cfg->cf_templatepath);
+}
+if (cfg->cf_whitelistpath != NULL) {
+free(cfg->cf_whitelistpath);
+}
+if (cfg->cf_senderdbpath != NULL) {
+free(cfg->cf_senderdbpath);
+}
+if (cfg->cf_rcptdbpath != NULL) {
+free(cfg->cf_rcptdbpath);
+}
+if (cfg->cf_defaultencryption != NULL) {
+free(cfg->cf_defaultencryption);
+}
+if (cfg->cf_userdefaultencryption != NULL) {
+free(cfg->cf_userdefaultencryption);
+}
+if (cfg->cf_defaultpassword != NULL) {
+free(cfg->cf_defaultpassword);
+}
+if (cfg->cf_userpolicy != NULL) {
+free(cfg->cf_userpolicy);
+}
+
+/* START ADD 2015 */
+if (cfg->cf_loopcheck != NULL) {
+free(cfg->cf_loopcheck);
+}
+if (cfg->cf_attachmentfilealias != NULL) {
+free(cfg->cf_attachmentfilealias);
+}
+/* END ADD 2015 */
+
+if (cfg->cf_ldapuri != NULL) {
+free(cfg->cf_ldapuri);
+}
+if (cfg->cf_ldapbasedn != NULL) {
+free(cfg->cf_ldapbasedn);
+}
+if (cfg->cf_ldapbinddn != NULL) {
+free(cfg->cf_ldapbinddn);
+}
+if (cfg->cf_ldapbindpassword != NULL) {
+free(cfg->cf_ldapbindpassword);
+}
+if (cfg->cf_ldapfilter != NULL) {
+free(cfg->cf_ldapfilter);
+}
+if (cfg->cf_fixedpassnotify != NULL) {
+free(cfg->cf_fixedpassnotify);
+}
+if (cfg->cf_fixedpassnotifypass != NULL) {
+free(cfg->cf_fixedpassnotifypass);
+}
+if (cfg->cf_autobccoption != NULL) {
+free(cfg->cf_autobccoption);
+}
+if (cfg->cf_defaultautobccconditionstring != NULL) {
+free(cfg->cf_defaultautobccconditionstring);
+}
+if (cfg->cf_defaultautobccmailaddr != NULL) {
+free(cfg->cf_defaultautobccmailaddr);
+}
+if (cfg->cf_references != NULL) {
+free(cfg->cf_references);
+}
+
+/* START ADD */
+if (cfg->cf_commandpass != NULL) {
+free(cfg->cf_commandpass);
+cfg->cf_commandpass = NULL;
+}
+if (cfg->cf_sendmailcommand != NULL) {
+free(cfg->cf_sendmailcommand);
+cfg->cf_sendmailcommand = NULL;
+}
+if (cfg->cf_sendpasswordcommand != NULL) {
+free(cfg->cf_sendpasswordcommand);
+cfg->cf_sendpasswordcommand = NULL;
+}
+if (cfg->cf_zipfilename != NULL) {
+free(cfg->cf_zipfilename);
+cfg->cf_zipfilename = NULL;
+}
+if (cfg->cf_mailsavetmpdir != NULL) {
+free(cfg->cf_mailsavetmpdir);
+cfg->cf_mailsavetmpdir = NULL;
+}
+if (cfg->cf_strcode != NULL) {
+free(cfg->cf_strcode);
+cfg->cf_strcode = NULL;
+}
+/* END ADD */
+
+/* START ADD for the Delete Mode 2016-03-17 */
+if (cfg->cf_tmpdir != NULL) {
+free(cfg->cf_tmpdir);
+cfg->cf_tmpdir = NULL;
+}
+if (cfg->cf_deletelistname != NULL) {
+free(cfg->cf_deletelistname);
+cfg->cf_deletelistname = NULL;
+}
+if (cfg->cf_defaultdeletepolicy != NULL) {
+free(cfg->cf_defaultdeletepolicy);
+cfg->cf_defaultdeletepolicy = NULL;
+}
+if (cfg->cf_attachdeletelist != NULL) {
+free(cfg->cf_attachdeletelist);
+cfg->cf_attachdeletelist = NULL;
+}
+/* END ADD for the Delete Mode 2016-03-17 */
+
+if (cfg->cf_defaultsendercheck != NULL) {
+free(cfg->cf_defaultsendercheck);
+cfg->cf_defaultsendercheck = NULL;
+}
+
+/* START ADD 2017-01-18 */
+if (cfg->cf_allowcharenvelopefrom != NULL) {
+free(cfg->cf_allowcharenvelopefrom);
+cfg->cf_allowcharenvelopefrom = NULL;
+}
+
+if (cfg->cf_errmsgtemplatepath != NULL) {
+free(cfg->cf_errmsgtemplatepath);
+cfg->cf_errmsgtemplatepath = NULL;
+}
+
+if (cfg->cf_alternativepartencrypt != NULL) {
+free(cfg->cf_alternativepartencrypt);
+cfg->cf_alternativepartencrypt = NULL;
+}
+/* END ADD 2017-01-18 */
+
+if (cfg->cf_extensiondbpath != NULL) {
+free(cfg->cf_extensiondbpath);
+cfg->cf_extensiondbpath = NULL;
+}
+
+if (cfg->cf_extensiondb != NULL) {
+free(cfg->cf_extensiondb);
+cfg->cf_extensiondb = NULL;
+}
+
+#ifdef __CUSTOMIZE2018
+if (cfg->cf_useaddmessageheader != NULL) {
+free(cfg->cf_useaddmessageheader);
+cfg->cf_useaddmessageheader = NULL;
+}
+
+if (cfg->cf_messagetmpljppath != NULL) {
+free(cfg->cf_messagetmpljppath);
+cfg->cf_messagetmpljppath = NULL;
+}
+
+if (cfg->cf_messagetmplenpath != NULL) {
+free(cfg->cf_messagetmplenpath);
+cfg->cf_messagetmplenpath = NULL;
+}
+
+if (cfg->cf_messagetmplbothpath != NULL) {
+free(cfg->cf_messagetmplbothpath);
+cfg->cf_messagetmplbothpath = NULL;
+}
+
+if (cfg->cf_useencryptsubject != NULL) {
+free(cfg->cf_useencryptsubject);
+cfg->cf_useencryptsubject = NULL;
+}
+
+if (cfg->cf_subjectencryptstringjp != NULL) {
+free(cfg->cf_subjectencryptstringjp);
+cfg->cf_subjectencryptstringjp = NULL;
+}
+
+if (cfg->cf_subjectencryptstringen != NULL) {
+free(cfg->cf_subjectencryptstringen);
+cfg->cf_subjectencryptstringen = NULL;
+}
+#endif	// __CUSTOMIZE2018
+
+free_sender_checker(cfg->cf_sendercheck);
+cfg->cf_sendercheck = NULL;
+
+free_harmless_proc_list(cfg->cf_harmlessproc);
+cfg->cf_harmlessproc = NULL;
+
+free_harmlessconf(cfg->cf_harmlessconf);
+cfg->cf_harmlessconf = NULL;
+
+if (cfg->cf_safetysenderharmlessconf != NULL) {
+free_harmlessconf(cfg->cf_safetysenderharmlessconf);
+}
+
+free_mimetypes(cfg->cf_mimetypes);
+cfg->cf_mimetypes = NULL;
+
+#ifdef __NOTICE_PASSWD
+if (cfg->cf_rcpttemplatepath != NULL) {
+free(cfg->cf_rcpttemplatepath);
+}
+#endif  // __NOTICE_PASSWD
+if (cfg->cf_zipattachmentcontenttype != NULL) {
+free(cfg->cf_zipattachmentcontenttype);
+}
+
+free(cfg);
+return;
+}
+
+static void *
+cfree_handler(void *arg)
+{
+int ret = 0;
+pthread_mutex_lock(&config_reload_lock);
+free_config(old_cfg);
+old_cfg = NULL;
+pthread_mutex_unlock(&config_reload_lock);
+pthread_exit(&ret);
+return NULL;
+}
+
+
+/*
+* config_init()
+*
+* Get current config structure pointer,
+* and countup the reference counter.
+*
+* Args: (void)
+*
+* Return value:
+*  struct config *		config structure pointer
+*/
+struct config *
+config_init()
+{
+struct config *ret_ptr;
+
+// countup reference counter
+pthread_mutex_lock(&config_lock);
+pthread_mutex_lock(&config_ref_lock);
+config_ref ++;
+
+// get config structure pointer
+ret_ptr = cur_cfg;
+
+pthread_mutex_unlock(&config_ref_lock);
+pthread_mutex_unlock(&config_lock);
+return ret_ptr;
+}
+
+/*
+* config_release()
+* 
+* Countdown config reference counter.
+*
+* Args:
+*  struct config *cfg		To release pointer.
+*
+* Return value:
+*  (void)
+*/
+void
+config_release(struct config *cfg)
+{
+pthread_mutex_lock(&config_lock);
+if (old_cfg == cfg) {
+// case to release old config
+pthread_mutex_lock(&config_ref_old_lock);
+config_ref_old --;
+if (config_ref_old == 0) {
+    pthread_mutex_unlock(&config_reload_lock);
+}
+pthread_mutex_unlock(&config_ref_old_lock);
+} else {
+// case to release cur config
+pthread_mutex_lock(&config_ref_lock);
+config_ref --;
+pthread_mutex_unlock(&config_ref_lock);
+}
+pthread_mutex_unlock(&config_lock);
+}
+
+/*
+* reload_config()
+*
+* Reload configuration file
+*
+* Args:
+*  char *file		Configuration file name
+*
+* Return value:
+*  0			Success
+*  CFG_NG		System error
+*  1			Temporaly error (during reloading)
+*  2			Temporaly error (because of config file)
+*/
+int
+reload_config(char *file)
+{
+struct config *cfg = NULL;
+int ret;
+pthread_t cfree;
+int i;
+
+pthread_mutex_lock(&config_ref_old_lock);
+ret = config_ref_old;
+pthread_mutex_unlock(&config_ref_old_lock);
+if (ret > 0) {
+// case reloading
+log(ERR_CONFIG_RELOADING, "reload_config", file);
+return 1;
+}
+
+// setup config structure
+cfg = setup_config();
+if (cfg == NULL) {
+return CFG_NG;
+}
+
+// read config file
+ret = read_config(file, cfe, nconfig, cfg);
+
+if (ret > 0) {
+// case config file error
+free_config(cfg);
+return 2;
+}
+if (ret < 0) {
+// case system error
+free_config(cfg);
+return CFG_NG;
+}
+
+#ifdef __NOTICE_PASSWD
+if (ismode_enc) {
+    if (strlen(cfg->cf_rcpttemplatepath) == 0) {
+        cfg->cf_rcpttemplatepath = strdup(cfg->cf_templatepath);
+        if (cfg->cf_rcpttemplatepath == NULL) {
+            free_config(cfg);
+            return CFG_NG;
+        }
+    }
+}
+#endif	// __NOTICE_PASSWD
+
+#ifdef __CUSTOMIZE2018
+if (ismode_enc) {
+// check required config parameters
+{
+    char *c_uamh, *c_ues;
+    int errflg = 0;
+    char *err_msg = NULL;
+
+    c_uamh = cfg->cf_useaddmessageheader;
+    c_ues = cfg->cf_useencryptsubject;
+    if (*c_uamh == 'Y' || *c_uamh == 'y') {
+        // case Use Add Message Header mode
+        if (*c_ues == 'Y' || *c_ues == 'y') {
+            // case JP/EN mode
+            if (*cfg->cf_messagetmpljppath == '\0') {
+                log("Config parameter MessageTmplJPPath is required");
+                errflg = 1;
+            } else {
+                err_msg = is_readable_file(cfg->cf_messagetmpljppath);
+                if (err_msg != NULL) {
+                    log("MessageTmplJPPath: %s", err_msg);
+                    errflg = 1;
+                    err_msg = NULL;
+                }
+            }
+            if (*cfg->cf_messagetmplenpath == '\0') {
+                log("Config parameter MessageTmplENPath is required");
+                errflg = 1;
+            } else {
+                err_msg = is_readable_file(cfg->cf_messagetmplenpath);
+                if (err_msg != NULL) {
+                    log("MessageTmplENPath: %s", err_msg);
+                    errflg = 1;
+                    err_msg = NULL;
+                }
+            }
+        } else {
+            // case BOTH mode
+            if (*cfg->cf_messagetmplbothpath == '\0') {
+                log("Config parameter MessageTmplBothPath is required");
+                errflg = 1;
+            } else {
+                err_msg = is_readable_file(cfg->cf_messagetmplbothpath);
+                if (err_msg != NULL) {
+                    log("MessageTmplBothPath: %s", err_msg);
+                    errflg = 1;
+                    err_msg = NULL;
+                }
+            }
+        }
+        if (errflg == 1) {
+            free_config(cfg);
+            return 2;
+        }
+    }
+
+    if (((*c_ues == 'Y') || (*c_ues == 'y'))
+     && ((*cfg->cf_subjectencryptstringjp != '\0')
+            || (*cfg->cf_subjectencryptstringen != '\0'))) {
+        cfg->cff_subencmode = 1;
+    } else {
+        cfg->cff_subencmode = 0;
+    }
+}
+}
+#endif	// __CUSTOMIZE2018
+
+// set db infomation for Encription Mode
+if (ismode_enc) {
+for (i = 0; i < DBNUM; i++) {
+    ret = strncmp(cfg->cf_senderdb, db_kind[i].db_name, db_kind[i].db_len);
+    if (ret == 0) {
+	cfg->cf_senderdbpath = strdup(cfg->cf_senderdb + db_kind[i].db_len);
+	cfg->cf_senderdbtype = db_kind[i].db_type;
+    }
+    ret = strncmp(cfg->cf_rcptdb, db_kind[i].db_name, db_kind[i].db_len);
+    if (ret == 0) {
+	cfg->cf_rcptdbpath = strdup(cfg->cf_rcptdb + db_kind[i].db_len);
+	cfg->cf_rcptdbtype = db_kind[i].db_type;
+    }
+    ret = strncmp(cfg->cf_extensiondb, db_kind[i].db_name, db_kind[i].db_len);
+    if (ret == 0) {
+	cfg->cf_extensiondbpath = strdup(cfg->cf_extensiondb + db_kind[i].db_len);
+	cfg->cf_extensiondbtype = db_kind[i].db_type;
+    }
+    if ((cfg->cf_senderdbpath != NULL) && (cfg->cf_rcptdbpath != NULL) && (cfg->cf_extensiondbpath != NULL)) {
+	break;
+    }
+}
+} else if (ismode_delete || ismode_harmless) {
+// set db infomation for Delete Mode
+for (i = 0; i < DBNUM; i++) {
+    ret = strncmp(cfg->cf_rcptdb, db_kind[i].db_name, db_kind[i].db_len);                   
+    if (ret == 0) {
+	cfg->cf_rcptdbpath = strdup(cfg->cf_rcptdb + db_kind[i].db_len);
+	cfg->cf_rcptdbtype = db_kind[i].db_type;
+    }
+}
+}
+
+// Only for Encription Mode --- from here ---
+if (ismode_enc) {
+// Check LDAP and AutoBCC configuration
+if ((cfg->cf_userpolicy[0] == 'Y') || (cfg->cf_userpolicy[0] == 'y')) {
+    ret = check_ldap_config(cfg);
+    if (ret != 0) {
+	free_config(cfg);
+	return CFG_NG;
+    }
+} else {
+    if ((cfg->cf_autobccoption[0] == 'Y') || (cfg->cf_autobccoption[0] == 'y')) {
+	log(ERR_AUTOBCC_OPTION, "AutoBccOption");
+	free_config(cfg);
+	return CFG_NG;
+    }
+}
+
+if ((cfg->cf_autobccoption[0] == 'Y' || cfg->cf_autobccoption[0] == 'y')) {
+	ret = check_autobcc_config(cfg);
+    if (ret != 0) {
+	free_config(cfg);
+	return CFG_NG;
+    }
+}
+
+// template file reload 
+if (reload_tmpl(cfg) != 0) {
+    free_config(cfg);
+    return CFG_NG;
+}
+
+// whitelist file reload
+if (reload_whitelist(cfg->cf_whitelistpath) != 0) {
+    free_config(cfg);
+    return CFG_NG;
+}
+
+#ifdef __CUSTOMIZE2018
+if (ismode_enc) {
+    // add message template file reload
+    if (reload_addmsg(cfg) != 0) {
+        free_config(cfg);
+        return CFG_NG;
+    }
+}
+#endif	// __CUSTOMIZE2018
+// Only for Encription Mode --- to here ---
+}
+
+// change config structure
+pthread_mutex_lock(&config_lock);
+pthread_mutex_lock(&config_ref_lock);
+pthread_mutex_lock(&config_ref_old_lock);
+config_ref_old = config_ref;
+config_ref = 0;
+if (config_ref_old > 0) {
+pthread_mutex_lock(&config_reload_lock);
+}
+pthread_mutex_unlock(&config_ref_old_lock);
+pthread_mutex_unlock(&config_ref_lock);
+
+// create config free thread
+ret = pthread_create(&cfree, NULL, cfree_handler, NULL);
+if (ret != 0) {
+free_config(cfg);
+pthread_mutex_unlock(&config_lock);
+log(ERR_THREAD_CREATE, "reload_config",
+    "cfree_handler", strerror(errno));
+return CFG_NG;
+}
+ret = pthread_detach(cfree);
+if (ret != 0) {
+free_config(cfg);
+	pthread_mutex_unlock(&config_lock);
+	log(ERR_THREAD_DETACH, "reload_config",
+	    "cfree_handler", strerror(errno));
+	return CFG_NG;
+    }
+
+    // switch pointer
+    old_cfg = cur_cfg;
+    cur_cfg = cfg;
+    switch_log(cfg->cf_syslogfacility);
+    pthread_mutex_unlock(&config_lock);
+
+    return 0;
+}
+
+static void *
+tfree_handler(void *arg)
+{
+    int ret = 0;
+    pthread_mutex_lock(&tmpl_reload_lock);
+    if (old_tmpl != NULL) {
+        if (old_tmpl->sender_tmpl != NULL) {
+	    free(old_tmpl->sender_tmpl);
+        }
+	#ifdef __NOTICE_PASSWD
+        if (old_tmpl->rcpt_tmpl != NULL) {
+            free(old_tmpl->rcpt_tmpl);
+        }
+	#endif  // __NOTICE_PASSWD
+        free(old_tmpl);
+    }
+    old_tmpl = NULL;
+    pthread_mutex_unlock(&tmpl_reload_lock);
+    pthread_exit(&ret);
+    return NULL;
+}
+
+static void *
+wfree_handler(void *arg)
+{
+    int ret = 0;
+    pthread_mutex_lock(&whitelist_reload_lock);
+    whilelist_free(old_whitelist);
+    old_whitelist = NULL;
+    pthread_mutex_unlock(&whitelist_reload_lock);
+    pthread_exit(&ret);
+    return NULL;
+}
+
+#ifdef __CUSTOMIZE2018
+static void *
+amtfree_handler(void *arg)
+{
+    int ret = 0;
+    pthread_mutex_lock(&addmsg_reload_lock);
+    if (old_addmsg != NULL) {
+        if (old_addmsg->amt_jp != NULL) {
+            free(old_addmsg->amt_jp);
+        }
+        if (old_addmsg->amt_en != NULL) {
+            free(old_addmsg->amt_en);
+        }
+        if (old_addmsg->amt_both != NULL) {
+            free(old_addmsg->amt_both);
+        }
+        if (old_addmsg->amt_jp_html != NULL) {
+            free(old_addmsg->amt_jp_html);
+        }
+        if (old_addmsg->amt_en_html != NULL) {
+            free(old_addmsg->amt_en_html);
+        }
+        if (old_addmsg->amt_both_html != NULL) {
+            free(old_addmsg->amt_both_html);
+        }
+        free(old_addmsg);
+    }
+    old_addmsg = NULL;
+    pthread_mutex_unlock(&addmsg_reload_lock);
+    pthread_exit(&ret);
+    return NULL;
+}
+#endif	// __CUSTOMIZE2018
+
+/*
+ * tmpl_init()
+ *
+ * Get current template data pointer,
+ * and countup the reference counter.
+ *
+ * Args: (void)
+ *
+ * Return value:
+ *  struct noticepass_tmpl *                template data structure pointer
+ */
+struct noticepass_tmpl *
+tmpl_init()
+{
+    struct noticepass_tmpl *ret_ptr;
+
+    // countup reference counter
+    pthread_mutex_lock(&tmpl_lock);
+    pthread_mutex_lock(&tmpl_ref_lock);
+    tmpl_ref ++;
+
+    // get template data pointer
+    ret_ptr = cur_tmpl;
+
+    pthread_mutex_unlock(&tmpl_ref_lock);
+    pthread_mutex_unlock(&tmpl_lock);
+    return ret_ptr;
+}
+
+/*
+ * whitelist_init()
+ *
+ * Get current whitelist data pointer,
+ * and countup the reference counter.
+ *
+ * Args: (void)
+ *
+ * Return value:
+ *  struct whitelist *        whitelist data pointer
+ */
+struct whitelist *
+whitelist_init()
+{
+    struct whitelist *ret_ptr;
+
+    // countup reference counter
+    pthread_mutex_lock(&whitelist_lock);
+    pthread_mutex_lock(&whitelist_ref_lock);
+    whitelist_ref ++;
+
+    // get template data pointer
+    ret_ptr = cur_whitelist;
+
+    pthread_mutex_unlock(&whitelist_ref_lock);
+    pthread_mutex_unlock(&whitelist_lock);
+    return ret_ptr;
+}
+
+#ifdef __CUSTOMIZE2018
+/*
+ * addmsg_init()
+ *
+ * Get current template data pointer,
+ * and countup the reference counter.
+ *
+ * Args: (void)
+ *
+ * Return value:
+ *  struct addmsg_tmpl *		template data structure pointer
+ */
+struct addmsg_tmpl *
+addmsg_init()
+{
+    struct addmsg_tmpl *ret_ptr;
+
+    // countup reference counter
+    pthread_mutex_lock(&addmsg_lock);
+    pthread_mutex_lock(&addmsg_ref_lock);
+    addmsg_ref ++;
+
+    // get template data pointer
+    ret_ptr = cur_addmsg;
+
+    pthread_mutex_unlock(&addmsg_ref_lock);
+    pthread_mutex_unlock(&addmsg_lock);
+    return ret_ptr;
+}
+#endif	// __CUSTOMIZE2018
+
+/*
+ * tmpl_release()
+ * 
+ * Countdown template reference counter.
+ *
+ * Args:
+ *  struct _tmpl *                template data structure pointer
+ *
+ * Return value:
+ *  (void)
+ */
+void
+tmpl_release(struct noticepass_tmpl *tmpdata)
+{
+    pthread_mutex_lock(&tmpl_lock);
+    if (old_tmpl == tmpdata) {
+	// case to release old template data
+	pthread_mutex_lock(&tmpl_ref_old_lock);
+	tmpl_ref_old --;
+	if (tmpl_ref_old == 0) {
+	    pthread_mutex_unlock(&tmpl_reload_lock);
+	}
+	pthread_mutex_unlock(&tmpl_ref_old_lock);
+    } else {
+	// case to release cur template data
+	pthread_mutex_lock(&tmpl_ref_lock);
+	tmpl_ref --;
+	pthread_mutex_unlock(&tmpl_ref_lock);
+    }
+    pthread_mutex_unlock(&tmpl_lock);
+}
+
+/*
+ * whitelist_release()
+ * 
+ * Countdown whitelist reference counter.
+ *
+ * Args:
+ *  char *tmpdata		To release pointer.
+ *
+ * Return value:
+ *  (void)
+ */
+void
+whitelist_release(struct whitelist *whitelistdata)
+{
+    pthread_mutex_lock(&whitelist_lock);
+    if ((old_whitelist == whitelistdata) && (old_whitelist != NULL)) {
+	// case to release old whitelist data
+	pthread_mutex_lock(&whitelist_ref_old_lock);
+	whitelist_ref_old --;
+	if (whitelist_ref_old == 0) {
+	    pthread_mutex_unlock(&whitelist_reload_lock);
+	}
+	pthread_mutex_unlock(&whitelist_ref_old_lock);
+    } else {
+	// case to release cur whitelist data
+	pthread_mutex_lock(&whitelist_ref_lock);
+	whitelist_ref --;
+	pthread_mutex_unlock(&whitelist_ref_lock);
+    }
+    pthread_mutex_unlock(&whitelist_lock);
+}
+
+#ifdef __CUSTOMIZE2018
+/*
+ * addmsg_release()
+ * 
+ * Countdown template reference counter.
+ *
+ * Args:
+ *  struct addmsg_tmpl *tmpdata		To release pointer.
+ *
+ * Return value:
+ *  (void)
+ */
+void
+addmsg_release(struct addmsg_tmpl *tmpdata)
+{
+    pthread_mutex_lock(&addmsg_lock);
+    if (old_addmsg == tmpdata) {
+	// case to release old template data
+	pthread_mutex_lock(&addmsg_ref_old_lock);
+	addmsg_ref_old --;
+	if (addmsg_ref_old == 0) {
+	    pthread_mutex_unlock(&addmsg_reload_lock);
+	}
+	pthread_mutex_unlock(&addmsg_ref_old_lock);
+    } else {
+	// case to release cur template data
+	pthread_mutex_lock(&addmsg_ref_lock);
+	addmsg_ref --;
+	pthread_mutex_unlock(&addmsg_ref_lock);
+    }
+    pthread_mutex_unlock(&addmsg_lock);
+}
+#endif	// __CUSTOMIZE2018
+
+
+/*
+ * reload_tmpl()
+ *
+ * Reload template file
+ *
+ * Args:
+ *  struct config *cfg          Configuration file name
+ *
+ * Return value:
+ *  0			Success
+ *  CFG_NG		System error
+ *  1			Temporaly error (during reloading)
+ *  2			Temporaly error (because of template file)
+ */
+int
+reload_tmpl(struct config *cfg)
+{
+    int ret;
+    pthread_t tfree;
+    char *tmpl_data = NULL;
+    char *rcpt_tmpl_data = NULL;
+    struct noticepass_tmpl *top = NULL;
+#ifdef __NOTICE_PASSWD
+    #define NOTICEPASS_TMPL_FREE   \
+    { \
+        if (tmpl_data != NULL) { \
+            free(tmpl_data); \
+        } \
+        if (rcpt_tmpl_data != NULL) { \
+            free(rcpt_tmpl_data); \
+        } \
+        free(top); \
+    }
+#else
+    #define NOTICEPASS_TMPL_FREE   \
+    { \
+        if (tmpl_data != NULL) { \
+            free(tmpl_data); \
+        } \
+        free(top); \
+    }  
+#endif  // __NOTICE_PASSWD    
+
+    pthread_mutex_lock(&tmpl_ref_old_lock);
+    ret = tmpl_ref_old;
+    pthread_mutex_unlock(&tmpl_ref_old_lock);
+    if (ret > 0) {
+	// case reloading
+	log(ERR_TEMPLATE_RELOADING, "reload_tmpl", "tmpl_ref_old");
+	return 1;
+    }
+
+    // make head
+    top = (struct noticepass_tmpl *)malloc(sizeof(struct noticepass_tmpl));
+    if (top == NULL) {
+        log(ERR_MEMORY_ALLOCATE, "reload_tmpl", "top", strerror(errno));
+        return 2;
+    }
+
+    memset(top, 0, sizeof(struct noticepass_tmpl));
+
+    // read tmplate file
+    if (tmpl_read(&(tmpl_data), cfg->cf_templatepath) != 0) {
+	NOTICEPASS_TMPL_FREE;
+	return 2;
+    }
+
+#ifdef __NOTICE_PASSWD
+    // read rcpt tmplate file
+    if (tmpl_read(&(rcpt_tmpl_data), cfg->cf_rcpttemplatepath) != 0) {
+	NOTICEPASS_TMPL_FREE;
+        return 2;
+    }
+#endif  // __NOTICE_PASSWD
+
+    // change template data
+    pthread_mutex_lock(&tmpl_lock);
+    pthread_mutex_lock(&tmpl_ref_lock);
+    pthread_mutex_lock(&tmpl_ref_old_lock);
+    tmpl_ref_old = tmpl_ref;
+    tmpl_ref = 0;
+    if (tmpl_ref_old > 0) {
+	pthread_mutex_lock(&tmpl_reload_lock);
+    }
+    pthread_mutex_unlock(&tmpl_ref_old_lock);
+    pthread_mutex_unlock(&tmpl_ref_lock);
+
+    // create template free thread
+    ret = pthread_create(&tfree, NULL, tfree_handler, NULL);
+    if (ret != 0) {
+	NOTICEPASS_TMPL_FREE;
+	pthread_mutex_unlock(&tmpl_lock);
+	log(ERR_THREAD_CREATE, "reload_tmpl",
+	    "tfree_handler", strerror(errno));
+	return CFG_NG;
+    }
+    ret = pthread_detach(tfree);
+    if (ret != 0) {
+	NOTICEPASS_TMPL_FREE;
+	pthread_mutex_unlock(&tmpl_lock);
+	log(ERR_THREAD_DETACH, "reload_tmpl",
+	    "tfree_handler", strerror(errno));
+	return CFG_NG;
+    }
+
+    // save data
+    top->sender_tmpl = tmpl_data;
+#ifdef __NOTICE_PASSWD 
+    top->rcpt_tmpl = rcpt_tmpl_data;
+#endif  // __NOTICE_PASSWD
+
+    // switch pointer
+    old_tmpl = cur_tmpl;
+    cur_tmpl = top;
+    pthread_mutex_unlock(&tmpl_lock);
+
+    return 0;
+}
+
+
+/*
+ * reload_whitelist()
+ *
+ * Reload whitelist file
+ *
+ * Args:
+ *  char *file		Configuration file name
+ *
+ * Return value:
+ *  0			Success
+ *  CFG_NG		System error
+ *  1			Temporaly error (during reloading)
+ *  2			Temporaly error (because of whitelist file)
+ */
+int
+reload_whitelist(char *file)
+{
+    int ret;
+    pthread_t tfree;
+    struct whitelist *whitelist_data = NULL;
+
+    pthread_mutex_lock(&whitelist_ref_old_lock);
+    ret = whitelist_ref_old;
+    pthread_mutex_unlock(&whitelist_ref_old_lock);
+    if (ret > 0) {
+	// case reloading
+	log(ERR_WHITELIST_RELOADING, "reload_whitelist", file);
+	return 1;
+    }
+
+    // read whitelist file
+    if (whitelist_read(&(whitelist_data), file) != 0) {
+	return 1;
+    }
+
+    // change template data
+    pthread_mutex_lock(&whitelist_lock);
+    pthread_mutex_lock(&whitelist_ref_lock);
+    pthread_mutex_lock(&whitelist_ref_old_lock);
+    whitelist_ref_old = whitelist_ref;
+    whitelist_ref = 0;
+    if (whitelist_ref_old > 0) {
+	pthread_mutex_lock(&whitelist_reload_lock);
+    }
+    pthread_mutex_unlock(&whitelist_ref_old_lock);
+    pthread_mutex_unlock(&whitelist_ref_lock);
+
+    // create whitelist free thread
+    ret = pthread_create(&tfree, NULL, wfree_handler, NULL);
+    if (ret != 0) {
+	whilelist_free(whitelist_data);
+	pthread_mutex_unlock(&tmpl_lock);
+	log(ERR_THREAD_CREATE, "reload_whitelist",
+	    "tfree_handler", strerror(errno));
+	return CFG_NG;
+    }
+    ret = pthread_detach(tfree);
+    if (ret != 0) {
+	whilelist_free(whitelist_data);
+	pthread_mutex_unlock(&whitelist_lock);
+	log(ERR_THREAD_DETACH, "reload_whitelist",
+	    "tfree_handler", strerror(errno));
+	return CFG_NG;
+    }
+
+    // switch pointer
+    old_whitelist = cur_whitelist;
+    cur_whitelist = whitelist_data;
+
+    pthread_mutex_unlock(&whitelist_lock);
+
+    return 0;
+}
+
+#ifdef __CUSTOMIZE2018
+/*
+ * make_html_tmpl
+ *
+ *  replace \r\n to <br>
+ *
+ * Args:
+ *  char *str	original template
+ *
+ * Return value:
+ *  char *	replaced string allocated
+ *  NULL	memory error
+ */
+struct _repchar
+{
+    char rc_c;
+    char *rc_str;
+    size_t rc_len;
+};
+char *
+make_html_tmpl(char *str)
+{
+    size_t olen, nlen;
+    int cnt = 0, extlen = 0;
+    char *p, *np;
+    char *tmpl_html;
+    struct _repchar rc[] = {
+        { '&', "&amp;", 5 },
+        { '<', "&lt;", 4 },
+        { '>', "&gt;", 4 },
+        { ' ', "&nbsp;", 6 },
+        { '"', "&quot;", 6 } };
+    int m, n;
+
+    // calc new length
+    olen = strlen(str);
+    for (p = strstr(str, "\r\n"); p != NULL; p = strstr(p + 2, "\r\n")) {
+        cnt ++;
+    }
+    n = sizeof(rc) / sizeof(struct _repchar);
+    for (p = str; *p != '\0'; p ++) {
+        for (m = 0; m < n; m ++) {
+            if (rc[m].rc_c == *p) {
+                // found
+                extlen += rc[m].rc_len;
+                break;
+            }
+        }
+    }
+        
+    // cnt * 4 + extlen = cnt * (strlen("<br>\r\n") - strlen("\r\n")) + extlen
+    nlen = olen + (cnt * 4) + extlen;
+
+    // allocate memory
+    tmpl_html = (char *)malloc(nlen + 1);
+    if (tmpl_html == NULL) {
+        return NULL;
+    }
+
+    memset(tmpl_html, 0, nlen + 1);
+
+    // replace charactors
+    for (np = tmpl_html, p = str; *p != '\0'; p ++) {
+        // first, find CRLF seqence
+        if (*p == '\r' && *(p + 1) == '\n') {
+            strcpy(np, "<br>\r\n");
+            p ++;
+            np += 6;
+            continue;
+        }
+        // then, find charactors
+        for (m = 0; m < n; m ++) {
+            if (rc[m].rc_c == *p) {
+                // found
+                strcpy(np, rc[m].rc_str);
+                np += rc[m].rc_len;
+                break;
+             }
+        }
+        if (m == n) {
+            // not found
+            *np = *p;
+            np ++;
+        }
+    }
+
+    return tmpl_html;
+}
+
+/*
+ * reload_addmsg()
+ *
+ * Reload template file
+ *
+ * Args:
+ *  struct config *cfg		Configuration file name
+ *
+ * Return value:
+ *  0			Success
+ *  CFG_NG		System error
+ *  1			Temporaly error (during reloading)
+ *  2			Temporaly error (because of template file)
+ */
+int
+reload_addmsg(struct config *cfg)
+{
+    int ret;
+    pthread_t amtfree;
+    struct addmsg_tmpl *top = NULL;
+    char *data_en = NULL;
+    char *data_jp = NULL;
+    char *data_both = NULL;
+    char *data_en_html = NULL;
+    char *data_jp_html = NULL;
+    char *data_both_html = NULL;
+
+#define ALL_TMPL_FREE	\
+	{ \
+	if (data_en != NULL) { \
+		free(data_en); \
+	} \
+	if (data_jp != NULL) { \
+		free(data_jp); \
+	} \
+	if (data_both == NULL) { \
+		free(data_both); \
+	} \
+	if (data_en_html != NULL) { \
+		free(data_en_html); \
+	} \
+	if (data_jp_html != NULL) { \
+		free(data_jp_html); \
+	} \
+	if (data_both_html != NULL) { \
+		free(data_both_html); \
+	} \
+	free(top); \
+	}
+
+    pthread_mutex_lock(&addmsg_ref_old_lock);
+    ret = addmsg_ref_old;
+    pthread_mutex_unlock(&addmsg_ref_old_lock);
+    if (ret > 0) {
+	// case reloading
+	log(ERR_ADDMSG_RELOADING, "reload_addmsg");
+	return 1;
+    }
+
+    // make head
+    top = (struct addmsg_tmpl *)malloc(sizeof(struct addmsg_tmpl));
+    if (top == NULL) {
+        log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "top", strerror(errno));
+        return 2;
+    }
+
+    memset(top, 0, sizeof(struct addmsg_tmpl));
+
+    // read tmplate files if necessary
+
+    // JP
+    // check if the file readable
+    if (NULL == is_readable_file(cfg->cf_messagetmpljppath)) {
+        if (tmpl_read(&(data_jp), cfg->cf_messagetmpljppath) != 0) {
+            if (data_jp != NULL) {
+                // case template file is empty
+                data_jp = strdup("");
+                if (data_jp == NULL) {
+                    log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "data_jp", strerror(errno));
+                    ALL_TMPL_FREE;
+                    return 2;
+                }
+            } else {
+                ALL_TMPL_FREE;
+                return 2;
+            }
+        }
+    } else {
+        data_jp = NULL;
+    }
+
+    // EN
+    // check if the file readable
+    if (NULL == is_readable_file(cfg->cf_messagetmplenpath)) {
+        if (tmpl_read(&(data_en), cfg->cf_messagetmplenpath) != 0) {
+            if (data_en != NULL) {
+                // case template file is empty
+                data_en = strdup("");
+                if (data_en == NULL) {
+                    log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "data_en", strerror(errno));
+                    ALL_TMPL_FREE;
+                    return 2;
+                }
+            } else {
+                ALL_TMPL_FREE;
+                return 2;
+            }
+        }
+    } else {
+        data_en = NULL;
+    }
+
+    // BOTH
+    // check if the file readable
+    if (NULL == is_readable_file(cfg->cf_messagetmplbothpath)) {
+        if (tmpl_read(&(data_both), cfg->cf_messagetmplbothpath) != 0) {
+            if (data_both != NULL) {
+                // case template file is empty
+                data_both = strdup("");
+                if (data_both == NULL) {
+                    log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "data_both", strerror(errno));
+                    ALL_TMPL_FREE;
+                    return 2;
+                }
+            } else {
+                ALL_TMPL_FREE;
+                return 2;
+            }
+        }
+    } else {
+        data_both = NULL;
+    }
+
+    // make html template
+    if (data_jp != NULL) {
+        data_jp_html = make_html_tmpl(data_jp);
+        if (data_jp_html == NULL) {
+            // memory error
+            log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "data_jp_html", strerror(errno));
+            ALL_TMPL_FREE;
+            return 2;
+        }
+    } else {
+        data_jp_html = NULL;
+    }
+    if (data_en != NULL) {
+        data_en_html = make_html_tmpl(data_en);
+        if (data_en_html == NULL) {
+            // memory error
+            log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "data_en_html", strerror(errno));
+            ALL_TMPL_FREE;
+            return 2;
+        }
+    } else {
+        data_en_html = NULL;
+    }
+    if (data_both != NULL) {
+        data_both_html = make_html_tmpl(data_both);
+        if (data_both_html == NULL) {
+            // memory error
+            log(ERR_MEMORY_ALLOCATE, "reload_addmsg", "data_both_html", strerror(errno));
+            ALL_TMPL_FREE;
+            return 2;
+        }
+    } else {
+        data_both_html = NULL;
+    }
+
+    // change template data
+    pthread_mutex_lock(&addmsg_lock);
+    pthread_mutex_lock(&addmsg_ref_lock);
+    pthread_mutex_lock(&addmsg_ref_old_lock);
+    addmsg_ref_old = addmsg_ref;
+    addmsg_ref = 0;
+    if (addmsg_ref_old > 0) {
+	pthread_mutex_lock(&addmsg_reload_lock);
+    }
+    pthread_mutex_unlock(&addmsg_ref_old_lock);
+    pthread_mutex_unlock(&addmsg_ref_lock);
+
+    // create template free thread
+    ret = pthread_create(&amtfree, NULL, amtfree_handler, NULL);
+    if (ret != 0) {
+	pthread_mutex_unlock(&addmsg_lock);
+	log(ERR_THREAD_CREATE, "reload_addmsg",
+	    "amtfree_handler", strerror(errno));
+        ALL_TMPL_FREE;
+	return CFG_NG;
+    }
+    ret = pthread_detach(amtfree);
+    if (ret != 0) {
+	pthread_mutex_unlock(&addmsg_lock);
+	log(ERR_THREAD_DETACH, "reload_addmsg",
+	    "amtfree_handler", strerror(errno));
+        ALL_TMPL_FREE;
+	return CFG_NG;
+    }
+
+    // switch pointer
+    top->amt_jp = data_jp;
+    top->amt_en = data_en;
+    top->amt_both = data_both;
+    top->amt_jp_html = data_jp_html;
+    top->amt_en_html = data_en_html;
+    top->amt_both_html = data_both_html;
+    old_addmsg = cur_addmsg;
+    cur_addmsg = top;
+    pthread_mutex_unlock(&addmsg_lock);
+
+    return 0;
+}
+#endif	// __CUSTOMIZE2018
+
+/*
+ * is_dbpath()
+ *
+ * Check if the string is valid DB type.
+ * Check if the string is valid path.
+ *
+ * Args:
+ *  char *path			string
+ *
+ * Return value:
+ *  NULL			Success
+ *  Invalid argument		Error
+ */
+static char *
+is_dbpath(char *path)
+{
+    static char errbuf[MAX_CONFIG_LINE];
+    char *retp, *file = NULL;
+    int   ret, i, n;
+
+    for (i = 0; i < DBNUM; i++) {
+        ret = strncmp(path, db_kind[i].db_name, db_kind[i].db_len);
+        if (ret == 0) {
+            file = path + db_kind[i].db_len;
+            break;
+        }
+    }
+    if (file == NULL || *file == '\0') {
+        n = sizeof(ERR_CONF_DBPATH) + strlen(path);
+        snprintf(errbuf, n, ERR_CONF_DBPATH, path);
+        return(errbuf);
+    }
+    retp = is_readable_file(file);
+    if (retp != NULL) {
+        n = sizeof(ERR_CONF_DBPATH) + strlen(path);
+        snprintf(errbuf, n, ERR_CONF_DBPATH, path);
+        return(errbuf);
+    }
+    return (NULL);
+}
+
+/*
+ * is_executable_file()
+ *
+ * Check file permission.
+ *
+ * Args:
+ *  char *			str
+ *
+ * Return value:
+ *  NULL			Success
+ *  Invalid argument		Error
+ */
+char *
+is_executable_file(char *str)
+{
+    static char errbuf[MAX_CONFIG_LINE];
+    struct stat st;
+    int n = 0;
+
+    if (stat(str, &st) < 0) {
+        n = sizeof(ERR_CONF_FILEDIR) + strlen(str) + strlen(strerror(errno));
+        snprintf(errbuf, n, ERR_CONF_FILEDIR, str, strerror(errno));
+        return (errbuf);
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        errno = EISDIR;
+        n = sizeof(ERR_CONF_FILEDIR) + strlen(str) + strlen(strerror(errno));
+        snprintf(errbuf, n, ERR_CONF_FILEDIR, str, strerror(errno));
+        return (errbuf);
+    }
+
+    if (access(str, X_OK) != 0) {
+        n = sizeof(ERR_CONF_FILEDIR) + strlen(str) + strlen(strerror(errno));
+        snprintf(errbuf, n, ERR_CONF_FILEDIR, str, strerror(errno));
+        return (errbuf);
+    }
+    return (NULL);
+}
+
+/*
+ * is_passwd_length()
+ *
+ * Check Password Length.
+ *
+ * Args:
+ *  int				len
+ *
+ * Return value:
+ *  NULL			Success
+ *  ErrorMessage		Error
+ */
+char *
+is_passwd_length(int len)
+{
+    if ((len < PASSMIN) || (PASSMAX < len)) {
+        return (ERR_CONF_PASSLEN);
+    }
+    return (NULL);
+}
+
+/*
+ * is_strcode()
+ *
+ * Check StrCode Value.
+ *
+ * Args:
+ *  char *			str
+ *
+ * Return value:
+ *  NULL			Success
+ *  ErrorMessage		Error
+ */
+char *
+is_strcode(char *str)
+{
+    int i;
+
+    for (i = 0; i < STRCODENUM; i++) {
+        if (strncmp(str, str_code[i].code_name, str_code[i].code_len) == 0) {
+	    return (NULL);
+        }
+    }
+    return (ERR_STR_CODE);
+}
+
+/*
+ * is_notnull()
+ *
+ * Check Value.
+ *
+ * Args:
+ *  char *			str
+ *
+ * Return value:
+ *  NULL			Success
+ *  ErrorMessage		Error
+ */
+char *
+is_notnull(char *str)
+{
+    if (str != NULL) {
+	if (strlen(str) > 0) {
+	    return (NULL);
+	}
+    }
+    return (ERR_NULL_VALUE);
+}
+
+/*
+ * is_yesno()
+ *
+ * Check Yes or No Value.
+ *
+ * Args:
+ *  char *			str
+ *
+ * Return value:
+ *  NULL			Success
+ *  ErrorMessage		Error
+ */
+char *
+is_yesno(char *str)
+{
+    if (str == NULL) {
+        return (ERR_YESNO);
+    }
+
+    if ((strcasecmp(str, STR_YES) != 0) &&
+        (strcasecmp(str, STR_NO) != 0)){
+        return (ERR_YESNO);
+    }
+
+    return (NULL);
+}
+
+/*
+ * check_ldap_config()
+ *
+ * Check LDAP configuration value.
+ *
+ * Args:
+ *  struct config               *cfg
+ *
+ * Return value:
+ *  0                           Success
+ *  -1                          Error
+ */
+static int
+check_ldap_config(struct config *cfg)
+{
+    LDAP *ld;
+
+    if (cfg->cf_ldapuri[0] == '\0') {
+        log(ERR_LDAP_CONFIG, "LdapUri");
+        return (-1);
+    }
+
+    if (cfg->cf_ldapbasedn[0] == '\0') {
+        log(ERR_LDAP_CONFIG, "LdapBaseDN");
+        return (-1);
+    }
+
+    if (cfg->cf_ldapbinddn[0] == '\0') {
+        log(ERR_LDAP_CONFIG, "LdapBindDN");
+        return (-1);
+    }
+
+    if (cfg->cf_ldapbindpassword[0] == '\0') {
+        log(ERR_LDAP_CONFIG, "LdapBindPassword");
+        return (-1);
+    }
+
+    if (cfg->cf_ldapfilter[0] == '\0') {
+        log(ERR_LDAP_CONFIG, "LdapFilter");
+        return (-1);
+    }
+
+    ld = myldap_connect(cfg->cf_ldapuri, cfg->cf_ldapbinddn, cfg->cf_ldapbindpassword);
+    if (ld == NULL) {
+        return (-1);
+    }
+    ldap_unbind_ext_s(ld, NULL, NULL);
+
+    return (0);
+}
+
+#ifdef __NOTICE_PASSWD
+/*
+ * is_passwordnotice()
+ *
+ * Check 0 or 1 or 2 Value.
+ *
+ * Args:
+ *  int vvvv                    integer
+ *
+ * Return value:
+ *  NULL                        Success
+ *  ErrorMessage                Error
+ */
+char *
+is_passwordnotice(int int_choice)
+{
+    if ((int_choice != 0) &&
+        (int_choice != 1) &&
+        (int_choice != 2)){
+        return (ERR_SET_PNOTICE);
+    }
+
+    return (NULL);
+}
+#endif  // __NOTICE_PASSWD
+
+/*
+ * check_autobcc_config()
+ *
+ * Check AutoBCC configuration value.
+ *
+ * Args:
+ *  struct config               *cfg
+ *
+ * Return value:
+ *  0                           Success
+ *  -1                          Error
+ */
+static int
+check_autobcc_config(struct config *cfg)
+{
+    if (cfg->cf_defaultautobccconditionstring[0] == '\0') {
+	log(ERR_AUTOBCC_PARAM, "DefaultAutoBccConditionString");
+	return (-1);
+    }
+
+    if (cfg->cf_defaultautobccmailaddr[0] == '\0') {
+	log(ERR_AUTOBCC_PARAM, "DefaultAutoBccMailAddr");
+	return (-1);
+    }
+
+    return (0);
+}
+
+/*
+ * is_timezone()
+ *
+ * Check Timezone Value.
+ * (Repairing The display of the date 2014/05/08 (Thu))
+ *
+ * Args:
+ *  int                         timezone
+ *
+ * Return value:
+ *  NULL                        Success
+ *  ErrorMessage                Error
+ */
+char *
+is_timezone(int timezone)
+{
+    int minutes = 0;
+
+    /* check MAX value and minimum value */
+    if ((timezone < TIMEZONEMIN) || (timezone > TIMEZONEMAX)) {
+        return (ERR_CONF_TIMEZONE);
+    }
+ 
+    minutes = timezone % 100;
+    if (timezone < 0) {
+        minutes = minutes * (-1);
+    }
+
+    /* check the two lower digits 
+     * OK: 00(0), 15, 30, 45
+     * NG: the others
+     */
+    if ((minutes > 45) || ((minutes % 15) != 0)) {
+        return (ERR_CONF_TIMEZONE);
+    }
+    return (NULL);
+}

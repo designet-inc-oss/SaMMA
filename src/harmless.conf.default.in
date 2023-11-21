@@ -1,0 +1,5 @@
+#元のMIMEタイプ		変換後のMIMEタイプ	拡張子		変換コマンド
+multipart/alternative	text/plain		-		alternative
+multipart/mixed		multipart/mixed		-		multipart
+text/plain		text/plain		-		none
+text/html		text/plain		.txt		/usr/bin/python-html2text
