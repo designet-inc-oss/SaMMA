@@ -2,9 +2,11 @@
 SENDER_FILE=sender
 RCPT_FILE=rcpt
 EXTENSION_FILE=extension
+COMMAND_FILE=command
 SENDER_DB=sender.db
 RCPT_DB=rcpt.db
 EXTENSION_DB=extension.db
+COMMAND_DB=command.db
 
 DBTYPE=btree
 OPT=-e
@@ -13,6 +15,7 @@ all:
 	[ -e $(SENDER_FILE) ] && makemap.sendmail $(OPT) $(DBTYPE) $(SENDER_DB) < $(SENDER_FILE) || :
 	[ -e $(RCPT_FILE) ] && makemap.sendmail $(OPT) $(DBTYPE) $(RCPT_DB) < $(RCPT_FILE) || :
 	[ -e $(EXTENSION_FILE) ] && makemap.sendmail $(OPT) $(DBTYPE) $(EXTENSION_DB) < $(EXTENSION_FILE) || :
+	[ -e $(COMMAND_FILE) ] && makemap.sendmail $(OPT) $(DBTYPE) $(COMMAND_DB) < $(COMMAND_FILE) || :
 
 clean:
-	rm -f $(SENDER_DB) $(RCPT_DB) $(EXTENSION)
+	rm -f $(SENDER_DB) $(RCPT_DB) $(EXTENSION_DB) $(COMMAND_DB)
