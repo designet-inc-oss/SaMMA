@@ -51,6 +51,7 @@ struct config {
     char *cf_senderdb;
     char *cf_rcptdb;
     char *cf_extensiondb;
+    char *cf_commanddb;
     char *cf_templatepath;
     char *cf_whitelistpath;         // ADD 20150316 whitelist path
     char *cf_sendmailcommand;
@@ -61,9 +62,11 @@ struct config {
     char *cf_senderdbpath;
     char *cf_rcptdbpath;
     char *cf_extensiondbpath;
+    char *cf_commanddbpath;
     DBTYPE cf_senderdbtype;
     DBTYPE cf_rcptdbtype;
     DBTYPE cf_extensiondbtype;
+    DBTYPE cf_commanddbtype;
     int  cf_passwordlength;
     char *cf_strcode;
     char *cf_defaultencryption;
