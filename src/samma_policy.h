@@ -67,6 +67,7 @@ struct search_res {
     char	*onetime_pass;
     DB		*rcpt_dbp;
     DB		*ext_dbp;
+    DB		*comm_dbp;
     LDAP 	*ld;
     char	*userdn;
 };
@@ -79,7 +80,7 @@ struct person {
 
 int search_rcptaddr(struct config *, char *, struct rcptaddr *, struct rcptinfo **, struct rcptinfo **);
 int search_rcptaddr_delmode(struct config *, struct rcptaddr *, struct rcptinfo **, struct rcptinfo **);
-int add_enclist(struct config *cfg, struct rcptinfo ***, char *, char *, char *, DB *, char *);
+int add_enclist(struct config *cfg, struct rcptinfo ***, char *, char *, char *, DB *, char *, DB *, char *);
 int search_fromaddr_bdb(struct config *, char *);
 int search_subdomain_bdb(DB *, const char *, char *, char **, char **);
 int mk_passwd(char **, int);
