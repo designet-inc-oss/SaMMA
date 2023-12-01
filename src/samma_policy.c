@@ -123,7 +123,7 @@ search_rcptstr_bdb(struct search_res *res, struct config *cfg,
             passwd = NULL;
 
             if (add_enclist(cfg, &passlist, searchstr, rcptaddr, tmppass,
-                            res->ext_dbp, cfg->cf_extensiondbpath) != 0) {
+                            res->ext_dbp, cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
                 free(noenc_searchstr);
                 return MALLOC_ERROR;
             }
@@ -134,7 +134,7 @@ search_rcptstr_bdb(struct search_res *res, struct config *cfg,
             /* Add rdmpasslist list */
             if (add_enclist(cfg, &rdmpasslist, searchstr, rcptaddr,
                             res->onetime_pass, res->ext_dbp,
-                            cfg->cf_extensiondbpath) != 0) {
+                            cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
                 free(noenc_searchstr);
                 return MALLOC_ERROR;
             }
@@ -166,6 +166,10 @@ free_search_rcptaddr(struct search_res *res)
 
     if (res->ext_dbp != NULL) {
 	db_close(res->ext_dbp);
+    }
+
+    if (res->comm_dbp != NULL) {
+	db_close(res->comm_dbp);
     }
 
     if (res->ld != NULL) {
@@ -255,6 +259,15 @@ search_rcptaddr(struct config *cfg, char *sender, struct rcptaddr *rcptlist, str
     if (cfg->cf_extensiondb && cfg->cf_extensiondb[0] != '\0') {
         /* extension db open */
         ret = db_open(&res.ext_dbp, cfg->cf_extensiondbpath,  cfg->cf_extensiondbtype);
+        if (ret == DB_ERROR) {
+            free_search_rcptaddr(&res);
+            return ERROR;
+        }
+    }
+
+    if (cfg->cf_commanddb && cfg->cf_commanddb[0] != '\0') {
+        /* command db open */
+        ret = db_open(&res.comm_dbp, cfg->cf_commanddbpath,  cfg->cf_commanddbtype);
         if (ret == DB_ERROR) {
             free_search_rcptaddr(&res);
             return ERROR;
@@ -493,7 +506,7 @@ search_rcptaddr_ldap(struct search_res *res, struct config *cfg,
 	/* Add address list */
 
         if (add_enclist(cfg, &passlist, rcptaddr, rcptaddr, pass,
-                        res->ext_dbp, cfg->cf_extensiondbpath) != 0) {
+                        res->ext_dbp, cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
             return ERROR;
         }
         DEBUGLOG("Add keyword to passlist structure.(%s)", rcptaddr);
@@ -501,7 +514,7 @@ search_rcptaddr_ldap(struct search_res *res, struct config *cfg,
         /* Add rdmpasslist list */
         if (add_enclist(cfg, &rdmpasslist, rcptaddr, rcptaddr,
                         res->onetime_pass, res->ext_dbp,
-                        cfg->cf_extensiondbpath) != 0) {
+                        cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
             return ERROR;
         }
         free(data.addr);
@@ -547,7 +560,7 @@ check_default_policy(int defalt_pass_len, struct search_res *res, struct config 
 
         /* Add address list */
         if (add_enclist(cfg, &passlist, rcptaddr, rcptaddr, pass,
-                        res->ext_dbp, cfg->cf_extensiondbpath) != 0) {
+                        res->ext_dbp, cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
             return MALLOC_ERROR;
         }
 
@@ -558,7 +571,7 @@ check_default_policy(int defalt_pass_len, struct search_res *res, struct config 
         /* Add rdmpasslist list */
         if (add_enclist(cfg, &rdmpasslist, rcptaddr, rcptaddr,
                         res->onetime_pass, res->ext_dbp,
-                        cfg->cf_extensiondbpath) != 0) {
+                        cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
             return MALLOC_ERROR;
         }
 
@@ -656,7 +669,7 @@ search_rcptaddr_bdb(struct search_res *res, struct config *cfg, char *rcptaddr,
             passwd = NULL;
 
             if (add_enclist(cfg, &passlist, subdomain, rcptaddr, tmppass,
-                            res->ext_dbp, cfg->cf_extensiondbpath) != 0) {
+                            res->ext_dbp, cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
                 free(searchaddr);
                 return MALLOC_ERROR;
             }
@@ -666,7 +679,7 @@ search_rcptaddr_bdb(struct search_res *res, struct config *cfg, char *rcptaddr,
             /* Add rdmpasslist list */
             if (add_enclist(cfg, &rdmpasslist, subdomain, rcptaddr,
                             res->onetime_pass, res->ext_dbp,
-                            cfg->cf_extensiondbpath) != 0) {
+                            cfg->cf_extensiondbpath, res->comm_dbp, cfg->cf_commanddbpath) != 0) {
                 free(searchaddr);
                 return MALLOC_ERROR;
             }
@@ -689,16 +702,20 @@ search_rcptaddr_bdb(struct search_res *res, struct config *cfg, char *rcptaddr,
  * char 		*passwd
  * DB			*ext_dbp
  * char			*extensiondbpath
+ * DB			*comm_dbp
+ * char			*commanddbpath
  *
  * return value
  *       0		Success
  *       -1		Error
  */
 int
-add_enclist(struct config *cfg, struct rcptinfo ***head, char *keyword, char *addr, char *passwd, DB *ext_dbp, char *extensiondbpath)
+add_enclist(struct config *cfg, struct rcptinfo ***head, char *keyword, char *addr, char *passwd, DB *ext_dbp, char *extensiondbpath, DB *comm_dbp, char *commanddbpath)
 {
     struct rcptinfo *p, *tmpp = NULL, *rcptinfo;
     char *extension;
+    char *command;
+    char *err;
     int ret;
 
     if (*head != NULL) {
@@ -776,6 +793,29 @@ add_enclist(struct config *cfg, struct rcptinfo ***head, char *keyword, char *ad
         }
     }
 
+    if (cfg->cf_commanddb && cfg->cf_commanddb[0] != '\0') {
+        /* set command */
+        ret = search_ext_bdb(comm_dbp, commanddbpath, keyword, &command);
+        if (ret == DB_ERROR) {
+            /* error ... */
+            log(ERR_SEARCH_EXT, "add_enclist", keyword);
+            free(rcptinfo->keyword);
+            free(rcptinfo->passwd);
+            free(rcptinfo);
+            return -1;
+        }
+
+        if (command != NULL) {
+            if (err) {
+                rcptinfo->command = NULL;
+            } else {
+                rcptinfo->command = command;
+            }
+        } else {
+            rcptinfo->command = NULL;
+        }
+    }
+
     if (push_rcptlist(&(rcptinfo->rcptlist), addr) != 0) {
         if (rcptinfo->keyword) {
             free(rcptinfo->keyword);
@@ -785,6 +825,9 @@ add_enclist(struct config *cfg, struct rcptinfo ***head, char *keyword, char *ad
         }
         if (rcptinfo->extension) {
             free(rcptinfo->extension);
+        }
+        if (rcptinfo->command) {
+            free(rcptinfo->command);
         }
         if (rcptinfo) {
             free(rcptinfo);
