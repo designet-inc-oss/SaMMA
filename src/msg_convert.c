@@ -384,6 +384,9 @@ char *read_mimetypes(char *filepath, void **pointer) {
             extensions = NULL;
         }
     }
+    if (making_list == NULL) {
+        log("No valid lines.(%s)", filepath);
+    }
     *pointer = making_list;
 
     if (fp != NULL) {
