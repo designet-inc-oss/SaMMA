@@ -40,6 +40,7 @@
 #include <libdgmail.h>
 #include <fcntl.h>
 
+#include "msg_convert.h"
 #include "mailzip_config.h"
 #include "mailsave.h"
 #include "zipconv.h"
@@ -479,6 +480,7 @@ zip_convert_mail(SMFICTX *ctx, struct mailinfo *minfo, struct config *cfg,
             tmp_rcptinfo.keyword_len = strlen(OTHERKEYWORD);
             tmp_rcptinfo.passwd = rdmpasslist->passwd;
             tmp_rcptinfo.extension = NULL;
+            tmp_rcptinfo.command = rdmpasslist->command;
             tmp_rcptinfo.rcptlist = rdm_noext;
             tmp_rcptinfo.Next = NULL;
 
@@ -691,10 +693,11 @@ add_attach_file(struct config *cfg, struct mailzip *mz, struct rcptinfo *rcpt)
     GMimeStream *r_stream, *f_stream;
     GMimeFilter *filter;
     FILE *fp;
-    int index, i;
+    int index, i, ret;
     const char *filename;
     char newfilename[FILE_NAME_MAX + 1];
     char *attach_ctype = NULL;
+    char *mime_type = NULL;
 
     pthread_mutex_lock(&gmime_lock);
     object = g_mime_message_get_mime_part(mz->message);
@@ -755,13 +758,33 @@ add_attach_file(struct config *cfg, struct mailzip *mz, struct rcptinfo *rcpt)
     part = g_mime_part_new();
 
     /* set part object */
-    attach_ctype = cfg->cf_zipattachmentcontenttype;
+    /* ここで拡張子DBに設定されている場合は */
+    if (rcpt->extension && rcpt->extension[0] != '\0') {
+
+        /* MimeTypeFileが設定されているか */
+        if (cfg->cf_mimetypes) {
+
+            /* MIMETYPEを調べる */
+            attach_ctype = get_mimetype(cfg, rcpt->extension);
+            if (attach_ctype == NULL) {
+                attach_ctype = "application/octet-stream";
+            }
+        } else {
+            attach_ctype = cfg->cf_zipattachmentcontenttype;
+        }
+    } else {
+        attach_ctype = cfg->cf_zipattachmentcontenttype;
+    }
 #ifndef GMIME26
     g_mime_part_set_content_header(part, CONTENTTYPE_HEADER, attach_ctype);
 #else
     g_mime_object_set_header((GMimeObject *)part, CONTENTTYPE_HEADER, attach_ctype);
 #endif
 
+    /* FREEする */
+    if (mime_type) {
+        free(mime_type);
+    }
 
 #ifndef GMIME26
     g_mime_part_set_encoding(part, GMIME_PART_ENCODING_BASE64);
@@ -1595,6 +1618,44 @@ replace_extension(char *newfilename, char *filename, char *new_ext)
 }
 
 /*
+ * get_mimetype
+ *
+ * Function
+ *      get_mimetype
+ *
+ * Argument
+ *      struct config  *cfg     config structure
+ *      char *str               extension
+ *
+ * Return value
+ *      m_p->mimetype  MimeTypes 
+ *      NULL
+ */
+int
+get_mimetype(struct config *cfg, char *extension)
+{
+    mimetype_list_t *m_p;
+    int res;
+
+    /* 読み込んだmimetypefileにextensionがあるか */
+    for (m_p = cfg->cf_mimetypes; m_p != NULL; m_p = m_p->next) {
+        res = strcmp(m_p->extension, extension);
+         if (res == 0) {
+            /* 拡張子が一致したら */
+            break;
+        }
+    }
+
+    /* m_pがNULLでないなら拡張子が見つかった */
+    if (m_p != NULL) {
+        return m_p->mimetype;
+    }
+
+    /* 拡張子が見つからなかった場合はNULL */
+    return NULL;
+}
+ 
+/*
  * convert_zip
  *
  * Function
@@ -1617,7 +1678,11 @@ convert_zip(struct config *cfg, struct mailzip *mz, struct rcptinfo *rcpt)
     char *list[5];
     int     sts = 0;
 
-    list[0] = cfg->cf_zipcommand;
+    if (rcpt->command && rcpt->command[0] != '\0') {
+        list[0] = rcpt->command;
+    } else {
+        list[0] = cfg->cf_zipcommand;
+    }
     list[1] = QOPTION;
     list[2] = mz->encfilepath;
     list[3] = CURRENTDIR;
