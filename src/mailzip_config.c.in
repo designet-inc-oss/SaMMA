@@ -253,6 +253,14 @@ struct cfentry cfe_enc[] = {
         OFFSET(struct config, cf_extensiondb), is_dbpath
     },
     {
+        "CommandDB", CF_STRING, "",
+        OFFSET(struct config, cf_commanddb), is_dbpath
+    },
+    {
+        "MimeTypeFile", CF_FUNCTION, "/etc/mime.types",
+        OFFSET(struct config, cf_mimetypes), read_mimetypes
+    },
+    {
         "PasswordNoticeSetSender", CF_INTEGER, "0",
         OFFSET(struct config, cf_passwordnoticesetsender), is_boolean
     },
@@ -781,6 +789,16 @@ free(cfg->cf_extensiondb);
 cfg->cf_extensiondb = NULL;
 }
 
+if (cfg->cf_commanddbpath != NULL) {
+free(cfg->cf_commanddbpath);
+cfg->cf_commanddbpath = NULL;
+}
+
+if (cfg->cf_commanddb != NULL) {
+free(cfg->cf_commanddb);
+cfg->cf_commanddb = NULL;
+}
+
 #ifdef __CUSTOMIZE2018
 if (cfg->cf_useaddmessageheader != NULL) {
 free(cfg->cf_useaddmessageheader);
@@ -1069,7 +1087,12 @@ for (i = 0; i < DBNUM; i++) {
 	cfg->cf_extensiondbpath = strdup(cfg->cf_extensiondb + db_kind[i].db_len);
 	cfg->cf_extensiondbtype = db_kind[i].db_type;
     }
-    if ((cfg->cf_senderdbpath != NULL) && (cfg->cf_rcptdbpath != NULL) && (cfg->cf_extensiondbpath != NULL)) {
+    ret = strncmp(cfg->cf_commanddb, db_kind[i].db_name, db_kind[i].db_len);
+    if (ret == 0) {
+	cfg->cf_commanddbpath = strdup(cfg->cf_commanddb + db_kind[i].db_len);
+	cfg->cf_commanddbtype = db_kind[i].db_type;
+    }
+    if ((cfg->cf_senderdbpath != NULL) && (cfg->cf_rcptdbpath != NULL) && (cfg->cf_extensiondbpath != NULL) && (cfg->cf_commanddbpath != NULL)) {
 	break;
     }
 }
