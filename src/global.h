@@ -28,7 +28,7 @@
 #define _GLOBAL_H_
 
 /* SaMMA version */
-#define SAMMA_VERSION "5.0.3"
+#define SAMMA_VERSION "5.0.4"
 
 /* Return Code */
 #define SUCCESS		0
