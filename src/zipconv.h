@@ -99,6 +99,8 @@ struct rcptinfo {
     /* allocate memory */
     char *extension;
     /* allocate memory */
+    char *command;
+    /* allocate memory */
     struct rcptaddr *rcptlist;
     /* allocate memory */
     struct rcptinfo *Next;
@@ -129,6 +131,7 @@ int replace_extension(char *, char *, char *);
 #ifdef __CUSTOMIZE2018
 void zipconv_log(char *, char *, struct rcptaddr *, struct name_list *, char *);
 char * get_body_head(char *);
+int get_mimetype(struct config *, char *);
 int replace_mime_part(GMimeObject *, GMimeObject *, int, struct mailzip *, GMimeContentType *);
 int is_noenc_qp(char);
 char * encode_qp(char *);
