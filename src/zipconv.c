@@ -115,6 +115,12 @@ mailzip_clean(struct mailzip mz)
 	free(mz.zipdir);
     }
 
+    /* remove encfile directory */
+    if (mz.encfiledir != NULL) {
+        remove_file_with_dir_recursive(mz.encfiledir);
+	free(mz.encfiledir);
+    }
+
     /* free attach name list */
     if (mz.namelist != NULL) {
 	free_name_list(mz.namelist);
@@ -414,7 +420,7 @@ zip_convert_mail(SMFICTX *ctx, struct mailinfo *minfo, struct config *cfg,
     if (rdmpasslist != NULL) {
         /* ランダムパスワードで暗号化するメールの送信 */
         for (p = rdmpasslist; p != NULL; p = p->Next) {
-            if (p->extension && p->extension[0] != '\0') {	
+            if ((p->extension && p->extension[0] != '\0') || (p->command && p->command[0] != '\0')) {	
                 /* 拡張子が指定されている場合 */
 	        /* encryption */
 	        if (convert_zip(cfg, &mz, p) != 0) {
@@ -450,6 +456,12 @@ zip_convert_mail(SMFICTX *ctx, struct mailinfo *minfo, struct config *cfg,
                     zipconv_log(msgid, from, p->rcptlist, mz.namelist, p->passwd);
                 }
 #endif	// __CUSTOMIZE2018_LOG
+
+	        if (unlink(mz.encfilepath) == -1) {
+		    log(ERR_FILE_REMOVE, "convert_zip", unlink(mz.encfilepath));
+		    mailzip_clean(mz);
+		    return ZIP_CONVERT_FAILED;
+	        }
             } else {
                 /* 拡張子が指定されていない場合 */
                 /* まとめて送信するためのリストを作成 */
@@ -480,7 +492,7 @@ zip_convert_mail(SMFICTX *ctx, struct mailinfo *minfo, struct config *cfg,
             tmp_rcptinfo.keyword_len = strlen(OTHERKEYWORD);
             tmp_rcptinfo.passwd = rdmpasslist->passwd;
             tmp_rcptinfo.extension = NULL;
-            tmp_rcptinfo.command = rdmpasslist->command;
+            tmp_rcptinfo.command = NULL;
             tmp_rcptinfo.rcptlist = rdm_noext;
             tmp_rcptinfo.Next = NULL;
 
@@ -1818,16 +1830,22 @@ mk_encpath(struct config *cfg, struct mailzip *mz)
     struct tm *ti; 
     time_t now;
     char *filename, *path;
-    char *tmpdir = mz->zipdir;
+    char *tmpstr, *tmpdir;
     char *cfg_attachname = NULL;
+    char *cfg_encdir = NULL;
+    int len;
+    char *encfiledir;
 
     /* Switch cfg_attachname according to the run modes */
     if (ismode_delete) {
         cfg_attachname = cfg->cf_deletelistname;
+	cfg_encdir = cfg->cf_tmpdir;
     } else if (ismode_harmless) {
         cfg_attachname = cfg->cf_zipfilename;
+	cfg_encdir = cfg->cf_encryptiontmpdir;
     } else {
         cfg_attachname = cfg->cf_zipfilename;
+	cfg_encdir = cfg->cf_encryptiontmpdir;
     }
 
     /* get now time */
@@ -1838,21 +1856,46 @@ mk_encpath(struct config *cfg, struct mailzip *mz)
     strdatenum = strlen(cfg_attachname) + STRTIMENUM + 1;
     filename = malloc(strdatenum);
     if (filename == NULL) {
-	log(ERR_MEMORY_ALLOCATE, "add_enclist", "rcptinfo", strerror(errno));
+	log(ERR_MEMORY_ALLOCATE, "mk_encpath", "filename", strerror(errno));
 	return -1;
     }
 
     strftime(filename, strdatenum - 1, cfg_attachname, ti);
     mz->attachfilename = filename;
 
-    /* create zip (delete-report) file path in Encryption (Delete) mode */
-    path = malloc(strlen(tmpdir) + strdatenum);
-    if (path == NULL) {
-	log(ERR_MEMORY_ALLOCATE, "add_enclist", "rcptinfo", strerror(errno));
-        free(filename);
+    /* make temporary directory for encripted file */
+    len = strlen(cfg_encdir) + strlen(ENCFILEDIR_TMPL) + 2;
+    tmpstr = (char *)malloc(len);
+    if (tmpstr == NULL) {
+	log(ERR_MEMORY_ALLOCATE, "mk_encpath", "tmpstr", strerror(errno));
 	return -1;
     }
-    sprintf(path, FILE_PATH, tmpdir, filename);
+    snprintf(tmpstr, len, FILE_PATH, cfg_encdir, ENCFILEDIR_TMPL);
+
+    tmpdir = mkdtemp(tmpstr);
+    if (tmpdir == NULL) {
+	log(ERR_DIRECTORY_MAKE, "mk_encpath", tmpstr, strerror(errno));
+        free(tmpstr);
+	return -1;
+    }
+
+    encfiledir = strdup(tmpdir);
+    if (encfiledir == NULL) {
+	log(ERR_MEMORY_ALLOCATE, "mk_encpath", "encfiledir", strerror(errno));
+        free(tmpstr);
+	return -1;
+    }
+    mz->encfiledir = encfiledir;
+
+    free(tmpstr);
+
+    /* create zip (delete-report) file path in Encryption (Delete) mode */
+    path = malloc(strlen(encfiledir) + strdatenum);
+    if (path == NULL) {
+	log(ERR_MEMORY_ALLOCATE, "mk_encpath", "encfilepath", strerror(errno));
+	return -1;
+    }
+    sprintf(path, FILE_PATH, encfiledir, filename);
 
     mz->encfilepath = path;
 

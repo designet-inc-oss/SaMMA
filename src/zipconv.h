@@ -52,6 +52,7 @@
 
 /* The last six characters should be XXXXXX. */
 #define TMPDIR_TMPL		".samma_XXXXXX"
+#define ENCFILEDIR_TMPL		".result_XXXXXX"
 
 #define FILE_RENAME_NOEXT       "%s(%d)"
 #define FILE_RENAME             "%s(%d)%s"
@@ -88,6 +89,7 @@ struct mailzip {
     struct addmsg_tmpl *am_tmpl;
     struct mlfiPriv *am_priv;
 #endif	// __CUSTOMIZE2018
+    char *encfiledir;
 };
 
 struct rcptinfo {
